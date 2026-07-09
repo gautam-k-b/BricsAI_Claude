@@ -1,0 +1,22 @@
+# Build artifacts
+bin/
+obj/
+*.dll
+*.pdb
+
+# Visual Studio / VS Code
+.vs/
+*.user
+*.suo
+
+# Secrets — never commit a real API key
+appsettings.json
+
+# Runtime-generated logs and debug dumps (not source)
+debug_log.txt
+transaction_log.txt
+chat_debug_log.txt
+AI_Error.txt
+AI_Context.txt
+AI_RawActionPlan.json
+AI_ExecutionLogs.txt

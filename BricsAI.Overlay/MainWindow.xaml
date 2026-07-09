@@ -1,0 +1,237 @@
+<Window x:Class="BricsAI.Overlay.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:BricsAI.Overlay"
+        xmlns:vm="clr-namespace:BricsAI.Overlay.ViewModels"
+        mc:Ignorable="d"
+        Title="BricsAI Assistant" Height="600" Width="650"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        Topmost="True" ResizeMode="CanResizeWithGrip" WindowStartupLocation="CenterScreen">
+    
+    <Window.DataContext>
+        <vm:MainViewModel/>
+    </Window.DataContext>
+
+    <Window.Resources>
+        <!-- Scrollbar Style -->
+        <Style TargetType="{x:Type ScrollBar}">
+            <Setter Property="Stylus.IsFlicksEnabled" Value="false"/>
+            <Setter Property="Foreground" Value="#444"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Width" Value="8"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ScrollBar}">
+                        <Grid x:Name="GridRoot" Width="8" Background="{TemplateBinding Background}">
+                            <Track x:Name="PART_Track" IsDirectionReversed="true" Focusable="false">
+                                <Track.Thumb>
+                                    <Thumb x:Name="Thumb" Background="{TemplateBinding Foreground}" 
+                                           Style="{DynamicResource ScrollThumbStyle}"/>
+                                </Track.Thumb>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton x:Name="PageUp" Command="ScrollBar.PageDownCommand" 
+                                                  Opacity="0" Focusable="false"/>
+                                </Track.IncreaseRepeatButton>
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton x:Name="PageDown" Command="ScrollBar.PageUpCommand" 
+                                                  Opacity="0" Focusable="false"/>
+                                </Track.DecreaseRepeatButton>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ScrollThumbStyle" TargetType="{x:Type Thumb}">
+             <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Thumb}">
+                        <Border x:Name="border" CornerRadius="4" Background="#555" Margin="0" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+    </Window.Resources>
+
+    <Border CornerRadius="10" Background="#E6202020" BorderBrush="#33FFFFFF" BorderThickness="1">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="20" ShadowDepth="5" Opacity="0.5" Color="Black"/>
+        </Border.Effect>
+        
+        <Grid>
+            <!-- Define Columns: Left Panel for Actions, Right Panel for Chat -->
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="200"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            
+            <Grid.RowDefinitions>
+                <RowDefinition Height="40"/> <!-- Title Bar -->
+                <RowDefinition Height="*"/>  <!-- Chat Area / Dashboard -->
+            </Grid.RowDefinitions>
+
+            <!-- Title Bar (Spans both columns) -->
+            <Grid Grid.Row="0" Grid.ColumnSpan="2" Background="Transparent" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                <TextBlock Text="BricsAI Architecture Agent" Foreground="#BBFFFFFF" VerticalAlignment="Center" Margin="15,0,0,0" FontSize="14" FontWeight="SemiBold"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,10,0">
+                    <Button Content="_" Width="30" Height="25" Click="Minimize_Click" Background="Transparent" Foreground="White" BorderThickness="0"/>
+                    <Button Content="X" Width="30" Height="25" Click="Close_Click" Background="Transparent" Foreground="#FF5555" BorderThickness="0"/>
+                </StackPanel>
+            </Grid>
+
+            <!-- Dashboard Sidebar (Left) -->
+            <Border Grid.Row="1" Grid.Column="0" Background="#2A2A2A" CornerRadius="0,0,0,10" BorderBrush="#33FFFFFF" BorderThickness="0,1,1,0">
+                <StackPanel Margin="10,20,10,10">
+                    <TextBlock Text="Quick Actions" Foreground="#00A8FF" FontSize="12" FontWeight="Bold" Margin="5,0,0,10" TextWrapping="Wrap"/>
+                    
+                    <Button Content="🤖 Run Full AI Proofing" Command="{Binding RunProofingCommand}" IsEnabled="{Binding IsQuickActionsEnabled}"
+                            Height="40" Margin="0,0,0,10" Background="#333" Foreground="White" BorderThickness="1" BorderBrush="#555" 
+                            HorizontalContentAlignment="Left" Padding="10,0" ToolTip="Execute exact order of operations and geometry checks.">
+                        <Button.Resources>
+                            <Style TargetType="Border">
+                                <Setter Property="CornerRadius" Value="6"/>
+                            </Style>
+                        </Button.Resources>
+                    </Button>
+                    
+                    <Button Content="🧹 Clean Geometry" Command="{Binding CleanGeometryCommand}" IsEnabled="{Binding IsQuickActionsEnabled}"
+                            Height="40" Margin="0,0,0,10" Background="#333" Foreground="White" BorderThickness="1" BorderBrush="#555" 
+                            HorizontalContentAlignment="Left" Padding="10,0" ToolTip="Purge, Overkill, and delete invisible/frozen layers.">
+                        <Button.Resources>
+                            <Style TargetType="Border">
+                                <Setter Property="CornerRadius" Value="6"/>
+                            </Style>
+                        </Button.Resources>
+                    </Button>
+                    
+                    <Button Content="📊 Generate Summary" Command="{Binding GenerateSummaryCommand}" IsEnabled="{Binding IsQuickActionsEnabled}"
+                            Height="40" Margin="0,0,0,10" Background="#333" Foreground="White" BorderThickness="1" BorderBrush="#555" 
+                            HorizontalContentAlignment="Left" Padding="10,0" ToolTip="Ask Surveyor to count objects and extract BOM without mutating variables.">
+                        <Button.Resources>
+                            <Style TargetType="Border">
+                                <Setter Property="CornerRadius" Value="6"/>
+                            </Style>
+                        </Button.Resources>
+                    </Button>
+                    
+                    <Border Height="1" Background="#444" Margin="10,10,10,20"/>
+                    
+                    <TextBlock Text="Powered by BricsAI Multi-Agent Architecture." Foreground="#666" FontSize="10" TextWrapping="Wrap" TextAlignment="Center"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Chat Panel (Right) -->
+            <Grid Grid.Row="1" Grid.Column="1">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <ScrollViewer x:Name="ChatScrollViewer" Grid.Row="0" Margin="10,0,10,10">
+                <ItemsControl ItemsSource="{Binding Messages}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="0,5">
+                                <Border CornerRadius="10" Padding="10" MaxWidth="300">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Background" Value="#333333"/>
+                                            <Setter Property="HorizontalAlignment" Value="Left"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsUser}" Value="True">
+                                                    <Setter Property="Background" Value="#0078D7"/>
+                                                    <Setter Property="HorizontalAlignment" Value="Right"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding DisplayName}" FontWeight="Bold" Foreground="#DDD" Margin="0,0,0,2"/>
+                                        <TextBox Text="{Binding Content, Mode=OneWay}" IsReadOnly="True" BorderThickness="0" Background="Transparent" Foreground="White" TextWrapping="Wrap" FontSize="12" SelectionBrush="#00A8FF"/>
+                                        
+                                        <!-- Animated Thinking Dots -->
+                                        <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                                            <StackPanel.Style>
+                                                <Style TargetType="StackPanel">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsThinking}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </StackPanel.Style>
+                                            <Ellipse Width="6" Height="6" Fill="#888888" Margin="0,0,4,0">
+                                                <Ellipse.Triggers>
+                                                    <EventTrigger RoutedEvent="Loaded">
+                                                        <BeginStoryboard>
+                                                            <Storyboard AutoReverse="True" RepeatBehavior="Forever">
+                                                                <DoubleAnimation Storyboard.TargetProperty="Opacity" From="0.3" To="1" Duration="0:0:0.5"/>
+                                                            </Storyboard>
+                                                        </BeginStoryboard>
+                                                    </EventTrigger>
+                                                </Ellipse.Triggers>
+                                            </Ellipse>
+                                            <Ellipse Width="6" Height="6" Fill="#888888" Margin="0,0,4,0">
+                                                <Ellipse.Triggers>
+                                                    <EventTrigger RoutedEvent="Loaded">
+                                                        <BeginStoryboard>
+                                                            <Storyboard AutoReverse="True" RepeatBehavior="Forever">
+                                                                <DoubleAnimation Storyboard.TargetProperty="Opacity" From="0.3" To="1" Duration="0:0:0.5" BeginTime="0:0:0.2"/>
+                                                            </Storyboard>
+                                                        </BeginStoryboard>
+                                                    </EventTrigger>
+                                                </Ellipse.Triggers>
+                                            </Ellipse>
+                                            <Ellipse Width="6" Height="6" Fill="#888888" Margin="0,0,0,0">
+                                                <Ellipse.Triggers>
+                                                    <EventTrigger RoutedEvent="Loaded">
+                                                        <BeginStoryboard>
+                                                            <Storyboard AutoReverse="True" RepeatBehavior="Forever">
+                                                                <DoubleAnimation Storyboard.TargetProperty="Opacity" From="0.3" To="1" Duration="0:0:0.5" BeginTime="0:0:0.4"/>
+                                                            </Storyboard>
+                                                        </BeginStoryboard>
+                                                    </EventTrigger>
+                                                </Ellipse.Triggers>
+                                            </Ellipse>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+
+            <!-- Input Area -->
+            <Border Grid.Row="1" Background="#333333" CornerRadius="0,0,10,0" Padding="15">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    
+                    <TextBox Text="{Binding InputText, UpdateSourceTrigger=PropertyChanged}" 
+                             PreviewKeyDown="Input_PreviewKeyDown"
+                             FontSize="14" CaretBrush="#00A8FF"
+                             MinHeight="40" MaxHeight="120" AcceptsReturn="True" TextWrapping="Wrap" 
+                             VerticalScrollBarVisibility="Auto" ScrollViewer.CanContentScroll="True"
+                             VerticalContentAlignment="Center" Background="#444" Foreground="White" BorderThickness="0" Padding="10,10,10,10"/>
+                    
+                    <Button Grid.Column="1" Content="Send" Command="{Binding SendCommand}" IsEnabled="{Binding IsNotBusy}" Margin="10,0,0,0" Padding="10,5" Background="#00A8FF" Foreground="White" BorderThickness="0">
+                        <Button.Resources>
+                            <Style TargetType="Border">
+                                <Setter Property="CornerRadius" Value="5"/>
+                            </Style>
+                        </Button.Resources>
+                    </Button>
+                </Grid>
+            </Border>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

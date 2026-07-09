@@ -1,0 +1,73 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build BricsAI Release",
+			"type": "shell",
+			"command": "dotnet",
+			"args": [
+				"build",
+				"BricsAI.sln",
+				"-c",
+				"Release"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Run BricsAI Overlay",
+			"type": "shell",
+			"command": "dotnet",
+			"args": [
+				"run",
+				"--project",
+				"BricsAI.Overlay\\BricsAI.Overlay.csproj",
+				"-c",
+				"Release"
+			],
+			"isBackground": false,
+			"dependsOn": "Build BricsAI Release"
+		},
+		{
+			"label": "Build BricsAI Release",
+			"type": "shell",
+			"command": "dotnet",
+			"args": [
+				"build",
+				"BricsAI.sln",
+				"-c",
+				"Release"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Build Overlay Release Diagnostic",
+			"type": "shell",
+			"command": "dotnet",
+			"args": [
+				"build",
+				"BricsAI.Overlay\\BricsAI.Overlay.csproj",
+				"-c",
+				"Release",
+				"--no-restore",
+				"/clp:ErrorsOnly",
+				"/nologo"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Build Overlay Release Diagnostic",
+			"type": "shell",
+			"command": "dotnet",
+			"args": [
+				"build",
+				"BricsAI.Overlay\\BricsAI.Overlay.csproj",
+				"-c",
+				"Release",
+				"--no-restore",
+				"/clp:ErrorsOnly",
+				"/nologo"
+			],
+			"isBackground": false
+		}
+	]
+}
