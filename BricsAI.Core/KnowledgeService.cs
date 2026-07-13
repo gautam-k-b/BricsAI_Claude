@@ -9,12 +9,16 @@ namespace BricsAI.Core
     {
         private static string GetKnowledgePath()
         {
-            var basePath = AppDomain.CurrentDomain.BaseDirectory;
+            // Allows test/mock runs to point at a scratch file instead of the real learned-mappings
+            // data next to the executable, so they don't pollute production knowledge.
+            var overrideDir = Environment.GetEnvironmentVariable("BRICSAI_KNOWLEDGE_DIR");
+            var basePath = string.IsNullOrWhiteSpace(overrideDir) ? AppDomain.CurrentDomain.BaseDirectory : overrideDir;
             var path = Path.Combine(basePath, "agent_knowledge.txt");
-            
+
             // Touch file if it doesn't exist
             if (!File.Exists(path))
             {
+                Directory.CreateDirectory(basePath);
                 File.WriteAllText(path, "--- BricsAI Learned Rules & Preferences ---\n\n");
             }
             return path;

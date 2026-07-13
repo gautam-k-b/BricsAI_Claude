@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using BricsAI.Core;
+using BricsAI.McpServer.Mock;
 
 namespace BricsAI.McpServer.Services
 {
@@ -15,6 +16,7 @@ namespace BricsAI.McpServer.Services
     {
         private dynamic? _acadApp;
         private readonly PluginManager _pluginManager = new PluginManager();
+        private bool _isMock;
 
         public bool IsConnected => _acadApp != null;
         public int MajorVersion { get; private set; }
@@ -42,6 +44,16 @@ namespace BricsAI.McpServer.Services
         public bool Connect()
         {
             if (_acadApp != null) return true;
+
+            if (Environment.GetEnvironmentVariable("BRICSAI_MOCK_CAD") == "1")
+            {
+                _acadApp = MockDrawingSeeder.CreateSeededApplication();
+                _isMock = true;
+                MajorVersion = 19;
+                _pluginManager.LoadPlugins();
+                LoggerService.LogTransaction("PLUGIN", "ComClient: connected to in-memory MOCK CAD (BRICSAI_MOCK_CAD=1) — no real BricsCAD involved.");
+                return true;
+            }
 
             try
             {
@@ -149,7 +161,7 @@ namespace BricsAI.McpServer.Services
             }
             catch (Exception ex)
             {
-                _acadApp = null;
+                if (!_isMock) _acadApp = null; // force reconnect next time — real COM link may have dropped
                 return $"Error executing command: {ex.Message}";
             }
         }
@@ -174,7 +186,7 @@ namespace BricsAI.McpServer.Services
             }
             catch (Exception ex)
             {
-                _acadApp = null;
+                if (!_isMock) _acadApp = null; // force reconnect next time — real COM link may have dropped
                 return $"Error executing command: {ex.Message}";
             }
         }
