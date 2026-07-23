@@ -79,6 +79,39 @@ namespace BricsAI.McpServer.Services
             }
         }
 
+        /// <summary>
+        /// Returns the active CAD document path/name when available. This is intended for
+        /// logging and telemetry and should be called from the STA host context.
+        /// </summary>
+        public string GetActiveDocumentNameOrPath()
+        {
+            try
+            {
+                if (_acadApp == null && !Connect())
+                {
+                    return "Unavailable";
+                }
+
+                string? fullName = _acadApp?.ActiveDocument?.FullName;
+                if (!string.IsNullOrWhiteSpace(fullName))
+                {
+                    return fullName;
+                }
+
+                string? name = _acadApp?.ActiveDocument?.Name;
+                if (!string.IsNullOrWhiteSpace(name))
+                {
+                    return name;
+                }
+
+                return "Unavailable";
+            }
+            catch
+            {
+                return "Unavailable";
+            }
+        }
+
         private void DetectVersion()
         {
             try

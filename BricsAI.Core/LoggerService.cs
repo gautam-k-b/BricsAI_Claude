@@ -34,5 +34,24 @@ namespace BricsAI.Core
         public static void LogAgentPrompt(string agentName, string generatedPlan) => LogTransaction($"AGENT:{agentName.ToUpper()}", $"Generated Plan:\n{generatedPlan}");
         public static void LogComExecution(string commandName, string lispCode) => LogTransaction("BRICSCAD:SEND", $"Tool: [{commandName}] -> {lispCode}");
         public static void LogComResponse(string response) => LogTransaction("BRICSCAD:RECEIVE", response);
+
+        /// <summary>
+        /// Logs per-action MCP usage metadata. Token counts are estimates derived from text length,
+        /// not provider-reported billing tokens.
+        /// </summary>
+        public static void LogMcpUsage(
+            string actionType,
+            string action,
+            string cadFile,
+            int inputChars,
+            int outputChars,
+            int estimatedInputTokens,
+            int estimatedOutputTokens,
+            long elapsedMs)
+        {
+            LogTransaction(
+                "MCP:USAGE",
+                $"ActionType={actionType}; Action={action}; CadFile={cadFile}; InputChars={inputChars}; OutputChars={outputChars}; EstimatedInputTokens={estimatedInputTokens}; EstimatedOutputTokens={estimatedOutputTokens}; ElapsedMs={elapsedMs}");
+        }
     }
 }

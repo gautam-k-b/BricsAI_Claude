@@ -73,6 +73,25 @@ namespace BricsAI.McpServer.Tools
         public static Task<string> PollLayerSemantics(ComClient comClient, StaComHost sta, [Description("Layer name.")] string layer)
             => ToolExec.RunAsync(comClient, sta, $"NET:POLL_LAYER_SEMANTICS:{layer}");
 
+        [McpServerTool(Name = "get_layer_geometry"), Description(
+            "Returns structured JSON for entities on a layer, including type, bounds, text, block names, and simple geometry samples. " +
+            "Supports pagination via offset and maxEntities so large layers can be fetched in chunks.")]
+        public static Task<string> GetLayerGeometry(
+            ComClient comClient, StaComHost sta,
+            [Description("Layer name.")] string layer,
+            [Description("Zero-based starting entity index for paging.")] int offset = 0,
+            [Description("Maximum number of entities to return in this page (1-1000). Default 200.")] int maxEntities = 200)
+            => ToolExec.RunAsync(comClient, sta, $"NET:GET_LAYER_GEOMETRY:{layer}|{offset}|{maxEntities}");
+
+        [McpServerTool(Name = "export_layer_snapshot"), Description(
+            "Exports a visual snapshot for a requested layer to a temporary image file and returns metadata with the file path. " +
+            "Useful for human review when geometry JSON is hard to interpret.")]
+        public static Task<string> ExportLayerSnapshot(
+            ComClient comClient, StaComHost sta,
+            [Description("Layer name.")] string layer,
+            [Description("Preferred export format. Common values: BMP, PNG, JPG. Default BMP.")] string format = "BMP")
+            => ToolExec.RunAsync(comClient, sta, $"NET:EXPORT_LAYER_SNAPSHOT:{layer}|{format}");
+
         [McpServerTool(Name = "learn_layer_mapping"), Description(
             "Permanently records a source-layer to standard-target-layer mapping in agent_knowledge.txt. " +
             "Only call this when you (or the user) have deliberately decided on a mapping — state the mapping and your reasoning " +

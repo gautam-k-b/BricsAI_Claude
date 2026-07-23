@@ -1,7 +1,13 @@
+using BricsAI.Core;
 using BricsAI.McpServer.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+
+// Remove duplicate entries accumulated from prior sessions before the server
+// starts accepting tool calls. Safe to run every startup — no-op if the file
+// is already clean.
+KnowledgeService.CompactFile();
 
 var builder = Host.CreateApplicationBuilder(args);
 

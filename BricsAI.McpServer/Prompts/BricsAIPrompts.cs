@@ -61,7 +61,7 @@ routine part of proofing.
         public static ChatMessage GenerateSummary() => new(ChatRole.User, @"
 Generate a read-only Bill of Materials / audit summary for this drawing. Do not modify the drawing in any way --
 use only read-only tools: list_layers, get_unmapped_layers, get_learned_mappings, count_empty_booths, and
-poll_layer_semantics if you need more detail on a specific layer. Summarize what standard A2Z layers are present,
+poll_layer_semantics / get_layer_geometry if you need more detail on a specific layer. Summarize what standard A2Z layers are present,
 what vendor layers remain unmapped, and any notable findings (e.g. booths missing numbers via count_empty_booths).
 Do not call apply_layer_mappings, run_full_proofing, learn_layer_mapping, or any other mutating tool.
 ");
@@ -76,7 +76,9 @@ Find and classify unmapped vendor layers into the standard A2Z target layers.
    - If the name is ambiguous (numeric codes, generic names like 'MISC', 'LAYER1', single letters), it's uncertain --
      you need geometry evidence.
 3. For uncertain layers, call poll_layer_semantics(layer) to get an entity-type histogram, block names, and text
-   samples, then classify using this evidence:
+        samples. If that is still ambiguous, call get_layer_geometry(layer, offset, maxEntities) and inspect the
+        returned entity-level data. Use pagination if needed for dense layers.
+        Classify using this evidence:
    - Expo_View2: electrical ports, power drops, building utilities, fire exits/hoses, keep-clear demarcations.
    - Expo_Column: column-like structural supports and pillars.
    - Expo_BoothOutline: booth boundary polylines/rectangles.

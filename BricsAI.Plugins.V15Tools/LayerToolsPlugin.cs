@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text.Json;
 using BricsAI.Core;
 
 namespace BricsAI.Plugins.V15Tools
@@ -36,6 +38,8 @@ namespace BricsAI.Plugins.V15Tools
                    netCommandName.StartsWith("NET:UNLOCK_LAYERS_BY_PREFIX") ||
                    netCommandName.StartsWith("NET:LOCK_BOOTH_LAYERS") ||
                    netCommandName.StartsWith("NET:POLL_LAYER_SEMANTICS") ||
+                   netCommandName.StartsWith("NET:GET_LAYER_GEOMETRY") ||
+                   netCommandName.StartsWith("NET:EXPORT_LAYER_SNAPSHOT") ||
                    netCommandName.StartsWith("NET:LEARN_LAYER_MAPPING") ||
                    netCommandName.StartsWith("NET:ISOLATE_LAYERS") ||
                    netCommandName.StartsWith("NET:SHOW_LAYER") ||
@@ -71,6 +75,8 @@ namespace BricsAI.Plugins.V15Tools
             if (netCmd.StartsWith("NET:UNLOCK_LAYERS_BY_PREFIX:")) return UnlockLayersByPrefix(doc, ExtractTarget(netCmd));
             if (netCmd.StartsWith("NET:LOCK_BOOTH_LAYERS")) return LockBoothLayers(doc);
             if (netCmd.StartsWith("NET:POLL_LAYER_SEMANTICS:")) return PollLayerSemantics(doc, netCmd);
+            if (netCmd.StartsWith("NET:GET_LAYER_GEOMETRY:")) return GetLayerGeometry(doc, netCmd);
+            if (netCmd.StartsWith("NET:EXPORT_LAYER_SNAPSHOT:")) return ExportLayerSnapshot(doc, netCmd);
             if (netCmd.StartsWith("NET:LEARN_LAYER_MAPPING:")) return LearnLayerMapping(netCmd);
             if (netCmd.StartsWith("NET:ISOLATE_LAYERS:")) return IsolateLayers(doc, netCmd.Substring("NET:ISOLATE_LAYERS:".Length));
             if (netCmd.StartsWith("NET:SHOW_LAYER:")) return SetLayerVisibility(doc, netCmd.Substring("NET:SHOW_LAYER:".Length).Trim(), true);
@@ -163,6 +169,276 @@ namespace BricsAI.Plugins.V15Tools
             {
                 return $"Error polling semantics: {ex.Message}";
             }
+        }
+
+        private string GetLayerGeometry(dynamic doc, string cmd)
+        {
+            try
+            {
+                var request = ParseGeometryRequest(cmd);
+                if (string.IsNullOrEmpty(request.Layer)) return "Error: Layer name required.";
+                int pageSize = Math.Clamp(request.MaxEntities, 1, 1000);
+                int offset = Math.Max(0, request.Offset);
+
+                var selectionSets = doc?.SelectionSets;
+                if (selectionSets == null) return "Error: Could not access SelectionSets.";
+
+                dynamic? sset = null;
+                try { sset = selectionSets.Item("BricsAI_GeometrySet"); sset.Delete(); } catch { }
+                sset = selectionSets.Add("BricsAI_GeometrySet");
+
+                short[] filterType = new short[] { 8 };
+                object[] filterData = new object[] { request.Layer };
+
+                try { sset.Select(5, Type.Missing, Type.Missing, filterType, filterData); } catch { return $"Error: Failed to select layer {request.Layer}"; }
+
+                int count = sset.Count;
+                var entities = new List<object>();
+                int endExclusive = Math.Min(count, offset + pageSize);
+
+                for (int i = offset; i < endExclusive; i++)
+                {
+                    var entity = sset.Item(i);
+                    entities.Add(BuildEntitySnapshot(entity));
+                }
+
+                var result = new
+                {
+                    Layer = request.Layer,
+                    TotalCount = count,
+                    Offset = offset,
+                    MaxEntities = pageSize,
+                    ReturnedCount = entities.Count,
+                    Truncated = endExclusive < count,
+                    NextOffset = endExclusive < count ? endExclusive : (int?)null,
+                    Entities = entities
+                };
+
+                return JsonSerializer.Serialize(result);
+            }
+            catch (Exception ex)
+            {
+                return $"Error getting layer geometry: {ex.Message}";
+            }
+        }
+
+        private string ExportLayerSnapshot(dynamic doc, string cmd)
+        {
+            try
+            {
+                var request = ParseSnapshotRequest(cmd);
+                if (string.IsNullOrWhiteSpace(request.Layer)) return "Error: Layer name required.";
+
+                var selectionSets = doc?.SelectionSets;
+                if (selectionSets == null) return "Error: Could not access SelectionSets.";
+
+                dynamic? sset = null;
+                try { sset = selectionSets.Item("BricsAI_SnapshotSet"); sset.Delete(); } catch { }
+                sset = selectionSets.Add("BricsAI_SnapshotSet");
+
+                short[] filterType = new short[] { 8 };
+                object[] filterData = new object[] { request.Layer };
+
+                try { sset.Select(5, Type.Missing, Type.Missing, filterType, filterData); } catch { return $"Error: Failed to select layer {request.Layer}"; }
+                if (sset.Count == 0) return $"Error: Layer '{request.Layer}' has no entities to export.";
+
+                var outDir = Path.Combine(Path.GetTempPath(), "BricsAI", "snapshots");
+                Directory.CreateDirectory(outDir);
+
+                string safeLayer = SanitizeFileName(request.Layer);
+                string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                string basePath = Path.Combine(outDir, $"{timestamp}_{safeLayer}");
+                string format = NormalizeFormat(request.Format);
+
+                string filePath;
+                try
+                {
+                    filePath = ExportSelection(doc, sset, basePath, format);
+                }
+                catch
+                {
+                    if (!string.Equals(format, "BMP", StringComparison.OrdinalIgnoreCase))
+                        filePath = ExportSelection(doc, sset, basePath, "BMP");
+                    else
+                        throw;
+                }
+
+                var result = new
+                {
+                    Layer = request.Layer,
+                    RequestedFormat = request.Format,
+                    FormatUsed = Path.GetExtension(filePath).TrimStart('.').ToUpperInvariant(),
+                    EntityCount = (int)sset.Count,
+                    FilePath = filePath
+                };
+
+                return JsonSerializer.Serialize(result);
+            }
+            catch (Exception ex)
+            {
+                return $"Error exporting layer snapshot: {ex.Message}";
+            }
+        }
+
+        private static string ExportSelection(dynamic doc, dynamic sset, string basePath, string format)
+        {
+            doc.Export(basePath, format, sset);
+
+            string ext = format.ToLowerInvariant();
+            string[] candidates = new[]
+            {
+                basePath,
+                basePath + "." + ext,
+                basePath + "." + format,
+                basePath + "." + format.ToUpperInvariant()
+            };
+
+            foreach (var candidate in candidates)
+            {
+                if (File.Exists(candidate)) return candidate;
+            }
+
+            return basePath + "." + ext;
+        }
+
+        private static (string Layer, int Offset, int MaxEntities) ParseGeometryRequest(string cmd)
+        {
+            string payload = cmd.Substring("NET:GET_LAYER_GEOMETRY:".Length);
+            var parts = payload.Split('|');
+            string layer = parts.Length > 0 ? parts[0].Trim() : string.Empty;
+            int offset = 0;
+            int maxEntities = 200;
+
+            if (parts.Length > 1) int.TryParse(parts[1], out offset);
+            if (parts.Length > 2 && int.TryParse(parts[2], out var parsedTake)) maxEntities = parsedTake;
+
+            return (layer, offset, maxEntities);
+        }
+
+        private static (string Layer, string Format) ParseSnapshotRequest(string cmd)
+        {
+            string payload = cmd.Substring("NET:EXPORT_LAYER_SNAPSHOT:".Length);
+            var parts = payload.Split('|');
+            string layer = parts.Length > 0 ? parts[0].Trim() : string.Empty;
+            string format = parts.Length > 1 ? parts[1].Trim() : "BMP";
+            return (layer, string.IsNullOrWhiteSpace(format) ? "BMP" : format);
+        }
+
+        private static string NormalizeFormat(string format)
+        {
+            var upper = format.Trim().ToUpperInvariant();
+            if (upper == "JPG") return "JPEG";
+            return string.IsNullOrWhiteSpace(upper) ? "BMP" : upper;
+        }
+
+        private static string SanitizeFileName(string input)
+        {
+            var invalid = Path.GetInvalidFileNameChars();
+            var chars = input.Select(ch => invalid.Contains(ch) ? '_' : ch).ToArray();
+            return new string(chars);
+        }
+
+        private static object BuildEntitySnapshot(dynamic entity)
+        {
+            var entityType = SafeGetString(() => entity.ObjectName) ?? SafeGetString(() => entity.EntityName) ?? "Unknown";
+            var dxfType = SafeGetString(() => entity.DxfType);
+            var layer = SafeGetString(() => entity.Layer) ?? "";
+            var blockName = SafeGetString(() => entity.Name);
+            var text = SafeGetString(() => entity.TextString);
+            var closed = SafeGetBool(() => entity.Closed);
+            var area = SafeGetDouble(() => entity.Area);
+            var bounds = GetBounds(entity);
+            var coordinates = GetCoordinates(entity);
+            var insertionPoint = GetPoint(() => entity.InsertionPoint);
+            var startPoint = GetPoint(() => entity.StartPoint);
+            var endPoint = GetPoint(() => entity.EndPoint);
+            var center = GetPoint(() => entity.Center);
+            var radius = SafeGetDouble(() => entity.Radius);
+
+            return new
+            {
+                EntityType = entityType,
+                DxfType = dxfType,
+                Layer = layer,
+                BlockName = blockName,
+                Text = text,
+                Closed = closed,
+                Area = area,
+                Bounds = bounds,
+                Coordinates = coordinates,
+                InsertionPoint = insertionPoint,
+                StartPoint = startPoint,
+                EndPoint = endPoint,
+                Center = center,
+                Radius = radius
+            };
+        }
+
+        private static object? GetBounds(dynamic entity)
+        {
+            try
+            {
+                entity.GetBoundingBox(out object minPt, out object maxPt);
+                return new
+                {
+                    Min = ToDoubleArray(minPt),
+                    Max = ToDoubleArray(maxPt)
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static double[]? GetCoordinates(dynamic entity)
+        {
+            try { return ToDoubleArray(entity.Coordinates); } catch { return null; }
+        }
+
+        private static double[]? GetPoint(Func<object> getter)
+        {
+            try { return ToDoubleArray(getter()); } catch { return null; }
+        }
+
+        private static double[]? ToDoubleArray(object value)
+        {
+            if (value is Array array)
+            {
+                var result = new double[array.Length];
+                for (int i = 0; i < array.Length; i++)
+                {
+                    result[i] = Convert.ToDouble(array.GetValue(i));
+                }
+                return result;
+            }
+
+            return null;
+        }
+
+        private static string? SafeGetString(Func<object> getter)
+        {
+            try
+            {
+                var value = getter();
+                if (value == null) return null;
+                var text = Convert.ToString(value);
+                return string.IsNullOrWhiteSpace(text) ? null : text;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static bool? SafeGetBool(Func<object> getter)
+        {
+            try { return Convert.ToBoolean(getter()); } catch { return null; }
+        }
+
+        private static double? SafeGetDouble(Func<object> getter)
+        {
+            try { return Convert.ToDouble(getter()); } catch { return null; }
         }
 
         private string? ExtractTarget(string cmd)
