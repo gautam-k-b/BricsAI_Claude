@@ -1,45 +1,117 @@
-# Training the BricsAI Proofing Agent on New Vendor Layers
+# BricsAI Training Guide for Claude MCP Users
 
-Every expo venue and outside vendor uses their own proprietary layer naming conventions. For example, one vendor might use `l1xxxx` for their booth outlines, while another uses `Ve_Booth_Lines`. 
+This guide is for end users running BricsAI.McpServer locally with Claude Code or Claude Desktop.
 
-To ensure the AI Proofing Agent can automatically process these files without human intervention every time, the Agent is equipped with a **Permanent Memory Bank** stored in `agent_knowledge.txt`. 
+## What "training" means
 
-You can train the AI to recognize these new vendor layers simply by talking to it in the BricsAI chat!
+Training in BricsAI means teaching persistent layer mappings from vendor layer names to A2Z standard layers.
 
-## How to Train the AI
-When you receive a new file from a vendor and notice their layers don't match standard A2Z layers, simply open the drawing in BricsCAD and instruct the AI via the chat window to memorize the mapping.
+Examples:
 
-### Example Training Prompts:
-You can use natural language. The AI understands context and will automatically invoke its Memory Tool. Here are a few examples of exactly what to type into the chat:
+- vendor layer A-WALL maps to Expo_Building
+- vendor layer V_BOOTH_TEXT maps to Expo_BoothNumber
 
-* "Learn that the vendor layer `l1xxxx` should always be mapped to `Expo_BoothOutline`."
-* "Memorize this rule for the future: `A-GLAZ` maps to `Expo_Building`."
-* "Please remember that layer `S-COLS` is the same as `Expo_Column`."
-* "Map the layer `Vendor_Booth_Text` to `Expo_BoothNumber` permanently."
+These mappings are saved in agent_knowledge.txt and reused automatically in later proofing runs.
 
-### Bulk Training
-If you have multiple layers to teach it from a brand new vendor, you can list them all in a single chat message!
+## Where memory is stored
 
-> **Example:** 
-> "I have a new vendor file. Please learn the following layer mappings:
-> - `v_booth_lines` -> `Expo_BoothOutline`
-> - `v_booth_txt` -> `Expo_BoothNumber`
-> - `v_facility` -> `Expo_Building`"
+Knowledge is stored in agent_knowledge.txt next to the server executable that is running.
 
-## How It Works Behind the Scenes
-When you send a training command, the AI evaluates your request and writes the rule to a local file named `agent_knowledge.txt` located in the BricsAI application directory. 
+Typical path:
 
-1. **Storage:** The rule is permanently saved. You do not need to repeat this training the next time you receive a file from that same vendor.
-2. **Execution:** The next time you click **"Run Full AI Proofing"** on *any* drawing, the AI reads this memory bank first (via `KnowledgeService`). It checks the drawing for any layers listed in its memory, and automatically migrates all geometry to the correct A2Z standard layers before applying the final colors and purges.
+- BricsAI.McpServer/bin/Release/net9.0-windows/agent_knowledge.txt
 
-## Managing the Memory Bank Manually
-If you ever want to review what the AI has learned, or if you accidentally commanded it to learn a wrong layer, you can manually edit its brain!
+Recent behavior improvements:
 
-1. Navigate to the folder where `BricsAI.Overlay.exe` is running (for example: `f:\Projects\BricsAI\BricsAI.Overlay\bin\Debug\net9.0-windows\`).
-2. Open `agent_knowledge.txt` in Notepad or any text editor.
-3. You will see human-readable lines such as:
-   ```text
-   [2026-02-27 10:15:32] Map the layer 'l1xxxx' to standard layer 'Expo_BoothOutline'.
-   [2026-02-27 10:16:05] Map the layer 'S-COLS' to standard layer 'Expo_Column'.
-   ```
-4. You can delete or adjust individual mapping lines here. On the next run, BricsAI will parse this file and apply only the mappings that remain.
+- duplicate mappings are compacted and deduplicated automatically
+- latest mapping for each source layer is retained
+- read-path is optimized for faster repeated access
+
+## Basic user workflow
+
+1. Open BricsCAD and load a drawing
+2. Open Claude (Code or Desktop) with bricsai MCP connected
+3. Ask for a read-only summary
+4. Ask Claude to classify unmapped layers
+5. Approve and apply mappings
+6. Run full proofing
+7. Optionally clean Deleted_ layers only after explicit confirmation
+
+## Simple prompts for non-technical users
+
+### Check connection and drawing access
+
+- Confirm bricsai MCP is connected and that you can access the active BricsCAD document.
+
+### Read-only preflight
+
+- Generate a read-only summary of this drawing, including standard layers, unmapped layers, and booths missing numbers. Do not modify the drawing.
+
+### Teach one mapping
+
+- Learn that layer A-WALL should always map to Expo_Building.
+
+### Teach multiple mappings at once
+
+- Learn these mappings permanently:
+  - V_BOOTH_LINES -> Expo_BoothOutline
+  - V_BOOTH_TEXT -> Expo_BoothNumber
+  - V_BUILDING -> Expo_Building
+
+### Auto-classify uncertain layers with deeper evidence
+
+- Classify all unmapped layers. Use name and semantics first. If still ambiguous, use get_layer_geometry with pagination before proposing mappings.
+
+### Run full proofing
+
+- Run full proofing now using the standard deterministic workflow.
+
+### Export visual snapshots for review
+
+- Export layer snapshots for Expo_BoothOutline, Expo_BoothNumber, Expo_Building, and Expo_View2 and return file paths.
+
+## Advanced mapping quality workflow
+
+Use this when vendor layers are noisy or inconsistent:
+
+1. get_unmapped_layers
+2. poll_layer_semantics for each uncertain layer
+3. get_layer_geometry with paging for unresolved ambiguity
+4. propose mapping plus one-line reason
+5. apply only high-confidence mappings
+6. keep low-confidence layers for manual review
+
+## Understanding usage logs and token estimates
+
+Every MCP tool action now logs usage details in transaction_log.txt, including:
+
+- timestamp
+- action and action type
+- CAD file name/path
+- input/output character counts
+- estimated input/output tokens
+- elapsed time
+
+Important: token counts are estimated, not billing-accurate Claude usage values.
+
+## Troubleshooting
+
+### Build fails with file lock errors
+
+If build fails with MSB3021 or MSB3027, stop running MCP server processes and build again:
+
+```powershell
+Get-Process BricsAI.McpServer -ErrorAction SilentlyContinue | Stop-Process -Force
+dotnet build BricsAI.sln -c Release
+```
+
+### Claude cannot act on drawing
+
+- Ensure BricsCAD is open with an active drawing
+- Ensure bricsai MCP is connected in Claude
+- Restart Claude MCP session after rebuilding binaries
+
+### Mapping seems ignored
+
+- Check agent_knowledge.txt path for the server binary actually running
+- Confirm the mapping line exists and source layer name matches exactly
