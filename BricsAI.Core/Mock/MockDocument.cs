@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace BricsAI.McpServer.Mock
+namespace BricsAI.Core.Mock
 {
     public class MockDocument
     {

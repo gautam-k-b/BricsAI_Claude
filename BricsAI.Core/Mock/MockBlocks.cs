@@ -1,6 +1,6 @@
 using System;
 
-namespace BricsAI.McpServer.Mock
+namespace BricsAI.Core.Mock
 {
     /// <summary>
     /// Minimal stub for the Blocks collection. The real plugins only touch this as a secondary

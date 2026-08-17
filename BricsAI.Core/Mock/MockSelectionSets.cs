@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace BricsAI.McpServer.Mock
+namespace BricsAI.Core.Mock
 {
     /// <summary>
     /// Mimics the AcadSelectionSets collection: Add(name)/Item(name)/Delete, name lookups throw

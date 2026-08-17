@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace BricsAI.McpServer.Mock
+namespace BricsAI.Core.Mock
 {
     /// <summary>
     /// Mimics the AutoCAD/BricsCAD Layers collection surface used by the plugins:

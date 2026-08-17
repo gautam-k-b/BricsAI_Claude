@@ -13,6 +13,11 @@ namespace BricsAI.Overlay.Services.Agents
         public string TargetLayer { get; set; } = "";
         public string Reason { get; set; } = "";
         public string LispCode { get; set; } = "";
+        /// <summary>
+        /// "High" for layers classified by name alone (Phase 1), "Low" for layers that
+        /// needed geometry evidence because the name alone was ambiguous (Phase 2).
+        /// </summary>
+        public string Confidence { get; set; } = "High";
     }
 
     public class MapperAgent : BaseAgent
@@ -36,6 +41,8 @@ namespace BricsAI.Overlay.Services.Agents
                 "STANDARD A2Z TARGET LAYERS:\n" +
                 "- Expo_BoothOutline: booth boundary polylines\n" +
                 "- Expo_BoothNumber: booth number text labels\n" +
+                "- Expo_MaxBoothOutline: oversized/max-footprint booth outlines\n" +
+                "- Expo_MaxBoothNumber: text labels for max-footprint booth numbers\n" +
                 "- Expo_Building: walls, partitions, doors, stairs, railings, permanent fixtures\n" +
                 "- Expo_Column: structural columns and pillars\n" +
                 "- Expo_Markings: entrance/exit labels, washroom labels, hall names, title blocks, annotations\n" +
@@ -115,9 +122,11 @@ namespace BricsAI.Overlay.Services.Agents
                 "2. Expo_Column: Column-like structural supports and pillars.\n" +
                 "3. Expo_BoothOutline: Booth boundary polylines/rectangles.\n" +
                 "4. Expo_BoothNumber: Booth number text labels.\n" +
-                "5. Expo_Building: Walls, partitions, doors, stairs, airwalls, permanent fixtures, railings.\n" +
-                "6. Expo_Markings: Entrances, washroom labels, show titles, hall names, general non-booth text.\n" +
-                "7. Expo_NES: Non-exhibiting spaces -- enclosed boxes with text like service areas, restrooms.\n\n" +
+                "5. Expo_MaxBoothOutline: Oversized/max-footprint booth outlines.\n" +
+                "6. Expo_MaxBoothNumber: Text labels for max-footprint booth numbers.\n" +
+                "7. Expo_Building: Walls, partitions, doors, stairs, airwalls, permanent fixtures, railings.\n" +
+                "8. Expo_Markings: Entrances, washroom labels, show titles, hall names, general non-booth text.\n" +
+                "9. Expo_NES: Non-exhibiting spaces -- enclosed boxes with text like service areas, restrooms.\n\n" +
                 "OUTPUT FORMAT: A JSON object with a \"mappings\" array. Each entry MUST have: \"source\", \"target\", \"reason\" (one plain-English sentence, max 20 words, mentioning key evidence).\n" +
                 "{ \"mappings\": [ { \"source\": \"LAYER_A\", \"target\": \"Expo_Building\", \"reason\": \"312 lines and polylines typical of wall and partition geometry.\" } ] }\n\n" +
                 "Output ONLY valid JSON matching this schema. No markdown, no explanation.";
@@ -147,7 +156,8 @@ namespace BricsAI.Overlay.Services.Agents
                             SourceLayer = src,
                             TargetLayer = tgt,
                             Reason = rsn,
-                            LispCode = $"NET:LEARN_LAYER_MAPPING:{src}:{tgt}"
+                            LispCode = $"NET:LEARN_LAYER_MAPPING:{src}:{tgt}",
+                            Confidence = "Low"
                         });
                     }
                 }
@@ -174,9 +184,11 @@ You MUST map the unknown layer to one of these standardized A2Z targets based on
 2. Expo_Column: Column-like structural supports and pillars.
 3. Expo_BoothOutline: Booth outlines. (NOTE: If the source layer is ALREADY named exactly Expo_BoothOutline, you must DO NOTHING and skip it).
 4. Expo_BoothNumber: Booth numbers/labels. (NOTE: If the source layer is ALREADY named exactly Expo_BoothNumber, you must DO NOTHING and skip it).
-5. Expo_Building: Objects which make up the physical building architecture (walls, partitions, doors, stairs, airwalls, permanent fixtures, railings).
-6. Expo_Markings: Text objects representing entrances, washroom labels (Male, Female, Man, Woman), Show titles, hall names, and general non-booth text.
-7. Expo_NES: Non-broken boxes with text inside that look like Non-Exhibiting Spaces (NES).
+5. Expo_MaxBoothOutline: Oversized/max-footprint booth outlines. (NOTE: If the source layer is ALREADY named exactly Expo_MaxBoothOutline, you must DO NOTHING and skip it).
+6. Expo_MaxBoothNumber: Text labels for max-footprint booth numbers. (NOTE: If the source layer is ALREADY named exactly Expo_MaxBoothNumber, you must DO NOTHING and skip it).
+7. Expo_Building: Objects which make up the physical building architecture (walls, partitions, doors, stairs, airwalls, permanent fixtures, railings).
+8. Expo_Markings: Text objects representing entrances, washroom labels (Male, Female, Man, Woman), Show titles, hall names, and general non-booth text.
+9. Expo_NES: Non-broken boxes with text inside that look like Non-Exhibiting Spaces (NES).
 
 If the layer consists primarily of raw, unnamed rectangles or lines but the layer name itself hints at booths (e.g. 'l1xxxx', 'show_exhibit'), guess `Expo_BoothOutline`.
 

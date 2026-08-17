@@ -27,6 +27,12 @@ namespace BricsAI.Overlay.Models
         public bool IsUser => Role == "User";
         public string DisplayName => IsUser ? "User:" : "BricsAI:";
 
+        /// <summary>
+        /// True for a formatted mapping-review table, so the chat bubble renders with a
+        /// monospace font and a wider bubble instead of wrapping the padded columns.
+        /// </summary>
+        public bool IsTableContent { get; set; }
+
         public bool IsThinking
         {
             get => _isThinking;

@@ -21,7 +21,17 @@ namespace BricsAI.Plugins.V19Tools
                    "Response: { \"tool_calls\": [{ \"command_name\": \"DELETE_LAYERS_BY_PREFIX\", \"lisp_code\": \"NET:DELETE_LAYERS_BY_PREFIX:Deleted_\" }] }\n\n" +
                    "User: 'Clean up / erase / delete all objects in layer 0' (or any named layer)\n" +
                    "Response: { \"tool_calls\": [{ \"command_name\": \"ERASE_ENTITIES_ON_LAYER\", \"lisp_code\": \"NET:ERASE_ENTITIES_ON_LAYER:0\" }] }\n" +
-                   "(Replace '0' with the actual layer name the user specifies, e.g. NET:ERASE_ENTITIES_ON_LAYER:Expo_Building)";
+                   "(Replace '0' with the actual layer name the user specifies, e.g. NET:ERASE_ENTITIES_ON_LAYER:Expo_Building)\n\n" +
+                   "User: 'Select everything on layer X' (optionally 'and move it to layer Y')\n" +
+                   "Response: { \"tool_calls\": [{ \"command_name\": \"SELECT_LAYER\", \"lisp_code\": \"NET:SELECT_LAYER:X\" }] } (or \"NET:SELECT_LAYER:X:Y\" to also move it)\n\n" +
+                   "User: 'Select the single largest object on layer X' / 'select everything except the largest on layer X'\n" +
+                   "Response: { \"tool_calls\": [{ \"command_name\": \"SELECT_OUTER\", \"lisp_code\": \"NET:SELECT_OUTER:X\" }] } (use NET:SELECT_INNER:X for everything but the largest)\n\n" +
+                   "User: 'Unlock all layers starting with prefix Deleted_'\n" +
+                   "Response: { \"tool_calls\": [{ \"command_name\": \"UNLOCK_LAYERS_BY_PREFIX\", \"lisp_code\": \"NET:UNLOCK_LAYERS_BY_PREFIX:Deleted_\" }] }\n\n" +
+                   "User: 'Show me the raw entity data for layer X' (paginated)\n" +
+                   "Response: { \"tool_calls\": [{ \"command_name\": \"GET_LAYER_GEOMETRY\", \"lisp_code\": \"NET:GET_LAYER_GEOMETRY:X|0|200\" }] } (offset|maxEntities, e.g. 0|200 for the first 200 entities)\n\n" +
+                   "User: 'Export a snapshot image of layer X so I can look at it'\n" +
+                   "Response: { \"tool_calls\": [{ \"command_name\": \"EXPORT_LAYER_SNAPSHOT\", \"lisp_code\": \"NET:EXPORT_LAYER_SNAPSHOT:X|BMP\" }] } (format is BMP, PNG, or JPG)";
         }
 
         public bool CanExecute(string netCommandName)
@@ -659,6 +669,8 @@ namespace BricsAI.Plugins.V19Tools
                     var layer = layers.Item(i);
                     string name = layer.Name;
 
+                    try { if ((bool)layer.Freeze) continue; } catch { } // frozen layers are left untouched, not retired
+
                     if (!allowList.Contains(name) && !name.StartsWith("Deleted_", StringComparison.OrdinalIgnoreCase))
                     {
                         try
@@ -888,11 +900,12 @@ namespace BricsAI.Plugins.V19Tools
 
                     if (lName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && !boothLayers.Contains(lName))
                     {
-                        try 
-                        { 
-                            layer.Lock = false; 
+                        try
+                        {
+                            if ((bool)layer.Freeze) continue; // frozen layers are left untouched
+                            layer.Lock = false;
                             unlockedCount++;
-                        } 
+                        }
                         catch { }
                     }
                 }
@@ -929,11 +942,17 @@ namespace BricsAI.Plugins.V19Tools
                 if (layers == null) return "Error: Could not access Layers.";
                 
                 var layerNames = new List<string>();
+                int frozenSkipped = 0;
                 for (int i = 0; i < layers.Count; i++)
                 {
-                    layerNames.Add((string)layers.Item(i).Name);
+                    var layer = layers.Item(i);
+                    try { if ((bool)layer.Freeze) { frozenSkipped++; continue; } } catch { }
+                    layerNames.Add((string)layer.Name);
                 }
-                
+
+                if (frozenSkipped > 0)
+                    LoggerService.LogTransaction("PLUGIN", $"GetAllLayers: skipped {frozenSkipped} frozen layer(s).");
+
                 return $"Layers found: {string.Join(", ", layerNames)}";
             }
             catch (Exception ex)

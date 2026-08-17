@@ -1,4 +1,4 @@
-namespace BricsAI.McpServer.Mock
+namespace BricsAI.Core.Mock
 {
     /// <summary>
     /// A single mock drawing entity. All members are public because the real plugin code

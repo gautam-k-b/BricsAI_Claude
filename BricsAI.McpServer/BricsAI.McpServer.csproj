@@ -14,12 +14,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Update="agent_knowledge.txt">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="..\BricsAI.Core\BricsAI.Core.csproj" />
     <ProjectReference Include="..\BricsAI.Plugins.V15Tools\BricsAI.Plugins.V15Tools.csproj" />
     <ProjectReference Include="..\BricsAI.Plugins.V19Tools\BricsAI.Plugins.V19Tools.csproj" />

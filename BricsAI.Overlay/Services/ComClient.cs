@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Text.Json;
+using BricsAI.Core;
 
 namespace BricsAI.Overlay.Services
 {
@@ -23,7 +24,7 @@ namespace BricsAI.Overlay.Services
             {
                 Type? t = Type.GetTypeFromProgID(progId);
                 if (t == null) return null;
-                
+
                 Guid clsid = t.GUID;
                 GetActiveObject(ref clsid, IntPtr.Zero, out object? obj);
                 return obj;
@@ -31,51 +32,6 @@ namespace BricsAI.Overlay.Services
             catch (Exception)
             {
                 return null;
-            }
-        }
-
-#pragma warning disable CS1998 // Async method lacks 'await' operators and will run synchronously
-        public async Task<string> SendCommandAsync(string command)
-#pragma warning restore CS1998 // Async method lacks 'await' operators and will run synchronously
-        {
-            try
-            {
-                // Connect if not already connected
-                if (_acadApp == null)
-                {
-                    // Try BricsCAD first
-                    _acadApp = GetActiveObject("BricscadApp.AcadApplication");
-
-                    if (_acadApp == null)
-                    {
-                        // Try AutoCAD fallback
-                       _acadApp = GetActiveObject("AutoCAD.Application");
-                    }
-
-                    if (_acadApp == null)
-                    {
-                        return "Error: Could not connect to BricsCAD. Is it running?";
-                    }
-                }
-
-                if (command.StartsWith("NET:"))
-                {
-                    var plugin = _pluginManager.GetPluginForCommand(command, MajorVersion);
-                    if (plugin != null)
-                    {
-                        return plugin.Execute(_acadApp.ActiveDocument, command);
-                    }
-                    return $"WARNING Unrecognized or Unsupported NET command: {command}";
-                }
-                
-                // Standard LISP command
-                object? ignore = _acadApp!.ActiveDocument.SendCommand(command + "\n");
-                return "Command sent.";
-            }
-            catch (Exception ex)
-            {
-                _acadApp = null; // Reset connection on failure
-                return $"Error executing command: {ex.Message}";
             }
         }
 
@@ -87,6 +43,15 @@ namespace BricsAI.Overlay.Services
             {
                 if (_acadApp != null) return true;
 
+                if (Environment.GetEnvironmentVariable("BRICSAI_MOCK_CAD") == "1")
+                {
+                    _acadApp = BricsAI.Core.Mock.MockDrawingSeeder.CreateSeededApplication();
+                    MajorVersion = 19;
+                    _pluginManager.LoadPlugins();
+                    LoggerService.LogTransaction("PLUGIN", "ComClient: connected to in-memory MOCK CAD (BRICSAI_MOCK_CAD=1) — no real BricsCAD involved.");
+                    return true;
+                }
+
                 try
                 {
                     // Try BricsCAD first
@@ -95,6 +60,7 @@ namespace BricsAI.Overlay.Services
                     {
                         DetectVersion();
                         _pluginManager.LoadPlugins();
+                        LoggerService.LogTransaction("PLUGIN", "ComClient: connected to BricsCAD.");
                         return true;
                     }
 
@@ -104,13 +70,16 @@ namespace BricsAI.Overlay.Services
                     {
                         DetectVersion();
                         _pluginManager.LoadPlugins();
+                        LoggerService.LogTransaction("PLUGIN", "ComClient: connected to AutoCAD (fallback).");
                         return true;
                     }
 
+                    LoggerService.LogTransaction("PLUGIN", "ComClient: could not connect — no running BricsCAD or AutoCAD instance found.");
                     return false;
                 }
-                catch
+                catch (Exception ex)
                 {
+                    LoggerService.LogTransaction("PLUGIN", $"ComClient: connect failed — {ex.Message}");
                     return false;
                 }
             });
@@ -137,7 +106,7 @@ namespace BricsAI.Overlay.Services
                         {
                             var layer = layers.Item(i);
                             string name = layer.Name;
-                            if (!keepLocked.Contains(name))
+                            if (!keepLocked.Contains(name) && !(bool)layer.Freeze)
                             {
                                 layer.Lock = false;
                             }
@@ -147,6 +116,59 @@ namespace BricsAI.Overlay.Services
                 }
             }
             catch { }
+        }
+
+        /// <summary>
+        /// Runs the standard A2Z exhibition proofing sequence deterministically, mirroring
+        /// BricsAI.McpServer's ProofingTools.RunFullProofing. Invoked via the NET:RUN_FULL_PROOFING
+        /// pseudo-command so the ExecutorAgent only has to recognize proofing intent and delegate to
+        /// this method instead of hand-assembling every step itself.
+        /// </summary>
+        public string RunFullProofingSequence(System.IProgress<string>? progress = null)
+        {
+            var log = new List<string>();
+            int step = 1;
+
+            void RunStep(string label, Func<string> action)
+            {
+                progress?.Report($"🛠️ {label}...");
+                string result = action();
+                LoggerService.LogComResponse(result);
+                log.Add($"Step {step++} [{label}]: {result}");
+                progress?.Report($"✅ {result}\n");
+            }
+
+            ForceUnlockAllLayersExceptBoothLayersSynchronously();
+            log.Add($"Step {step++} [Unlock]: Unlocked all layers except protected booth layers.");
+
+            RunStep("Lock Booth Layers", () => RunNetCommand("NET:LOCK_BOOTH_LAYERS"));
+            RunStep("Prepare Geometry", () => RunNetCommand("NET:PREPARE_GEOMETRY"));
+            RunStep("Apply Layer Mappings", () => RunNetCommand("NET:APPLY_LAYER_MAPPINGS"));
+            RunStep("Apply Standard Colors", () => RunRawCommand("(c:a2zcolor)"));
+            RunStep("Purge", () => RunRawCommand("(command \"-PURGE\" \"All\" \"*\" \"N\")"));
+            RunStep("Rename Unmapped Layers", () => RunNetCommand("NET:RENAME_DELETED_LAYERS"));
+
+            return string.Join("\n", log);
+        }
+
+        private string RunNetCommand(string netCmd)
+        {
+            var plugin = _pluginManager.GetPluginForCommand(netCmd, MajorVersion);
+            if (plugin == null || _acadApp?.ActiveDocument == null)
+                return $"WARNING Unrecognized or Unsupported NET command: {netCmd}";
+
+            LoggerService.LogComExecution(plugin.Name ?? "Unknown Plugin", netCmd);
+            return plugin.Execute(_acadApp!.ActiveDocument, netCmd);
+        }
+
+        private string RunRawCommand(string command)
+        {
+            if (_acadApp?.ActiveDocument == null)
+                return $"Error: no active document for command [{command}]";
+
+            LoggerService.LogComExecution("Native LISP", command);
+            object? ignore = _acadApp!.ActiveDocument.SendCommand(command + "\n");
+            return $"Executed: {command}";
         }
 
         private void DetectVersion()
@@ -250,7 +272,17 @@ namespace BricsAI.Overlay.Services
 
                             if (!string.IsNullOrEmpty(netCmd) && _acadApp?.ActiveDocument != null)
                             {
-                                if (netCmd.StartsWith("NET:MESSAGE:"))
+                                if (netCmd == "NET:RUN_FULL_PROOFING")
+                                {
+                                    progress?.Report("🛠️ Running full proofing sequence...");
+                                    string proofingLog = RunFullProofingSequence(progress);
+                                    results.Add(proofingLog);
+                                    batchHasApplyLayerMappings = true;
+                                    batchHasRenameDeleted = true;
+                                    batchHasLockBooth = true;
+                                    renameDeletedRanThisBatch = true;
+                                }
+                                else if (netCmd.StartsWith("NET:MESSAGE:"))
                                 {
                                     string msg = netCmd.Substring("NET:MESSAGE:".Length).Trim();
                                     string ret = $"MESSAGE: {msg}";
@@ -372,6 +404,12 @@ namespace BricsAI.Overlay.Services
 
                     if (!string.IsNullOrEmpty(netCmdSingle) && _acadApp?.ActiveDocument != null)
                     {
+                        if (netCmdSingle == "NET:RUN_FULL_PROOFING")
+                        {
+                            progress?.Report("🛠️ Running full proofing sequence...");
+                            return RunFullProofingSequence(progress);
+                        }
+
                         if (netCmdSingle.StartsWith("NET:MESSAGE:"))
                         {
                             string msg = netCmdSingle.Substring("NET:MESSAGE:".Length).Trim();

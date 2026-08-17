@@ -2,6 +2,8 @@
 
 Purpose: run reliable CAD proofing with Claude + BricsAI MCP using a safe, repeatable process.
 
+This SOP covers the **Claude Code / Claude Desktop + BricsAI MCP** flow. If you're using the **BricsAI.Overlay** desktop app instead, the daily workflow is the same (open BricsCAD, open the drawing, ask it to proof) but the mapping-review step looks different: Overlay shows one numbered table of all proposed mappings (with a confidence and reason column) instead of a conversational back-and-forth, and you reply with things like `include 1,3,5`, `exclude 2,4`, or `confirm all` — you can also say `remember <layer> always maps to <target>` at any point during review without interrupting it.
+
 ## 1) Daily Startup
 
 1. Open BricsCAD.
@@ -32,6 +34,8 @@ Prompt:
 Prompt:
 
 "Classify all unmapped layers. Use name and semantics first. If uncertain, use get_layer_geometry with pagination before proposing a mapping."
+
+Note: frozen layers never appear in this list — they're intentionally left untouched throughout proofing. If a layer you expect to see is missing, check whether it's frozen.
 
 ## 4) Proofing Run
 

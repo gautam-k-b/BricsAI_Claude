@@ -19,7 +19,9 @@ namespace BricsAI.Plugins.V15Tools
                    "User: 'Count booths without a booth number / how many booth outlines have no number / investigate and give count of unmatched booths'\n" +
                    "Response: { \"tool_calls\": [{ \"command_name\": \"COUNT_EMPTY_BOOTHS\", \"lisp_code\": \"NET:COUNT_EMPTY_BOOTHS\" }] }\n\n" +
                    "User: 'Prepare the geometry'\n" +
-                   "Response: { \"tool_calls\": [{ \"command_name\": \"PREPARE_GEOMETRY\", \"lisp_code\": \"NET:PREPARE_GEOMETRY\" }] }";
+                   "Response: { \"tool_calls\": [{ \"command_name\": \"PREPARE_GEOMETRY\", \"lisp_code\": \"NET:PREPARE_GEOMETRY\" }] }\n\n" +
+                   "User: 'Select the building outline' (the largest-bounding-box closed polyline on a layer)\n" +
+                   "Response: { \"tool_calls\": [{ \"command_name\": \"SELECT_BUILDING_LINES\", \"lisp_code\": \"NET:SELECT_BUILDING_LINES:Expo_Building\" }] }";
         }
 
         public bool CanExecute(string netCommandName)

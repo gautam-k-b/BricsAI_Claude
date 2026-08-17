@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 
-namespace BricsAI.McpServer.Mock
+namespace BricsAI.Core.Mock
 {
     /// <summary>
     /// Mimics a COM AcadSelectionSet: built via Select(mode, pt1, pt2, filterType[], filterData[])

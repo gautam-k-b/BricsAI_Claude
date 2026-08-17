@@ -14,9 +14,6 @@
     <None Update="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="agent_knowledge.txt">
-    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-  </None>
   </ItemGroup>
 
   <ItemGroup>

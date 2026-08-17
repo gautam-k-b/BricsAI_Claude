@@ -21,3 +21,6 @@ AI_Error.txt
 AI_Context.txt
 AI_RawActionPlan.json
 AI_ExecutionLogs.txt
+
+# Release notes now live as GitHub Releases, not a tracked repo file — kept locally as a draft
+RELEASE_NOTES.md

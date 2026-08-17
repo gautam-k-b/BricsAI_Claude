@@ -51,9 +51,10 @@ Whenever you see layers with the ""Deleted_"" prefix in the raw data:
 3. If the user's prompt is asking to delete, remove, clean, or clear these layers in any phrasing (e.g. 'those unmapped layers', 'delete those', 'still not deleted', 'leftover layers', etc.), explicitly call that out in your summary so the Executor knows exactly what action to take.
 
 [USER PREFERENCES & LEARNED RULES]
-{BricsAI.Core.KnowledgeService.GetLearnings()}
-
-CRITICAL LAYER MAPPINGS: If provided above in the Learned Rules block, you MUST prioritize the explicitly defined user layer mappings over trying to guess geometry.";
+{BricsAI.Core.KnowledgeService.GetFreeFormRules()}
+(Note: layer-to-target mappings already known from prior sessions are NOT listed here — they've
+already been filtered out of the raw layer data below and are applied automatically elsewhere.
+This block only contains free-form behavioral preferences.)";
 
 
             string prompt = $"USER OBJECTIVE:\n{userPrompt}\n\nRAW LAYER DATA:\n{rawLayerData}\n\nPlease summarize the drawing state and the required migration paths.";

@@ -11,21 +11,21 @@ Examples:
 - vendor layer A-WALL maps to Expo_Building
 - vendor layer V_BOOTH_TEXT maps to Expo_BoothNumber
 
-These mappings are saved in agent_knowledge.txt and reused automatically in later proofing runs.
+These mappings are saved in a local SQLite database and reused automatically in later proofing runs — and are also immediately available if you switch to the BricsAI.Overlay desktop app, since both share the same store.
 
 ## Where memory is stored
 
-Knowledge is stored in agent_knowledge.txt next to the server executable that is running.
+Knowledge is stored in a SQLite database at:
 
-Typical path:
+- `%LOCALAPPDATA%\BricsAI\agent_knowledge.db`
 
-- BricsAI.McpServer/bin/Release/net9.0-windows/agent_knowledge.txt
+(not next to the server executable anymore — this is a per-user location shared by both BricsAI.McpServer and BricsAI.Overlay). A starter copy is checked into the project repo at the solution root; if you're setting up a new machine, copy that file to the path above before your first run to carry over the existing mapping history instead of starting empty.
 
-Recent behavior improvements:
+Current behavior:
 
-- duplicate mappings are compacted and deduplicated automatically
+- mappings are updated in place per source layer (no duplicates ever accumulate)
 - latest mapping for each source layer is retained
-- read-path is optimized for faster repeated access
+- lookups are indexed, so performance stays flat as the mapping history grows
 
 ## Basic user workflow
 
@@ -113,5 +113,5 @@ dotnet build BricsAI.sln -c Release
 
 ### Mapping seems ignored
 
-- Check agent_knowledge.txt path for the server binary actually running
-- Confirm the mapping line exists and source layer name matches exactly
+- Confirm `%LOCALAPPDATA%\BricsAI\agent_knowledge.db` exists and isn't overridden by a stale `BRICSAI_KNOWLEDGE_DIR` environment variable
+- Ask Claude to run get_learned_mappings and confirm the source layer name matches exactly (case doesn't matter, but the text must otherwise match)

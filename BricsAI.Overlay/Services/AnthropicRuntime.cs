@@ -96,7 +96,13 @@ namespace BricsAI.Overlay.Services
             };
 
             var message = await client.Messages.Create(parameters);
-            var content = string.Join("\n", message.Content.OfType<TextBlock>().Select(b => b.Text)).Trim();
+            var textBlocks = new System.Collections.Generic.List<string>();
+            foreach (var block in message.Content)
+            {
+                if (block.TryPickText(out var textBlock))
+                    textBlocks.Add(textBlock.Text);
+            }
+            var content = string.Join("\n", textBlocks).Trim();
 
             var inputTokens = (int)message.Usage.InputTokens;
             var outputTokens = (int)message.Usage.OutputTokens;

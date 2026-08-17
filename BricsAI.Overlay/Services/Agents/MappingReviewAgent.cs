@@ -1,9 +1,19 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 
 namespace BricsAI.Overlay.Services.Agents
 {
+    public class TableReviewResponse
+    {
+        public string Intent { get; set; } = "QUESTION";
+        public List<int> Indexes { get; set; } = new List<int>();
+        public string RuleText { get; set; } = "";
+    }
+
     public class MappingReviewAgent : BaseAgent
     {
         public MappingReviewAgent()
@@ -12,131 +22,74 @@ namespace BricsAI.Overlay.Services.Agents
         }
 
         /// <summary>
-        /// Classifies user response to a single mapping proposal.
-        /// Returns: ACCEPT, SKIP, or ABORT
+        /// Classifies a free-form reply against the full numbered table of mapping proposals shown
+        /// to the user. One call handles index-based include/exclude ("include 1,3,5", "exclude 2"),
+        /// a mid-review memorize instruction ("remember X always maps to Y"), blanket confirmation,
+        /// a layer-visibility action request, a pure question, or an abort.
         /// </summary>
-        public async Task<string> ClassifySingleMappingResponseAsync(string userResponse, string sourceLayer, string proposedTarget)
+        public async Task<(TableReviewResponse Response, int Tokens, int InputTokens, int OutputTokens)> ClassifyTableReviewResponseAsync(
+            string userMessage,
+            List<(string Source, string Target)> proposals,
+            Dictionary<string, string> confidenceByLayer,
+            Dictionary<string, string> reasonByLayer,
+            HashSet<int> alreadyIncluded,
+            HashSet<int> alreadyExcluded)
         {
+            var table = new StringBuilder();
+            for (int i = 0; i < proposals.Count; i++)
+            {
+                int idx = i + 1;
+                string status = alreadyIncluded.Contains(idx) ? "INCLUDED" : alreadyExcluded.Contains(idx) ? "EXCLUDED" : "PENDING";
+                string confidence = confidenceByLayer.TryGetValue(proposals[i].Source, out var c) ? c : "Low";
+                string reason = reasonByLayer.TryGetValue(proposals[i].Source, out var r) && !string.IsNullOrWhiteSpace(r) ? r : "no stated reason";
+                table.AppendLine($"{idx}. {proposals[i].Source} -> {proposals[i].Target} (Confidence: {confidence}, Reason: {reason}, Status: {status})");
+            }
+
             string systemPrompt = $@"You are the Mapping Review Classifier for BricsAI.
-The system has shown the user a SINGLE layer mapping proposal and is waiting for their response.
+The system has shown the user a numbered table of proposed CAD layer mappings and is waiting for their reply.
 
-The proposed mapping is: Map '{sourceLayer}' to '{proposedTarget}'
+[CURRENT PROPOSALS]
+{table}
 
-Your ONLY job is to read the user's response and classify their intent into exactly ONE of the following three keywords:
+Your job is to read the user's free-form reply and classify it into exactly ONE of these intents:
 
 [KEYWORDS]
-ACCEPT
-SKIP
-ABORT
+INCLUDE: the user wants specific numbered rows accepted (saved). Examples: 'include 1,3,5', 'accept 2 and 4', 'yes to 1', 'keep 3'.
+EXCLUDE: the user wants specific numbered rows rejected (not saved). Examples: 'exclude 2,4', 'skip 1', 'reject 3', 'no to 5'.
+MEMORIZE: the user is stating a standalone rule or mapping to remember for the future, independent of the numbered rows shown — NOT a response about the current table rows. Examples: 'remember that VendorLayerX always maps to Expo_Building', 'always skip layers starting with TEMP_', 'add a mapping: Layer99 to Expo_Column'. Put the plain-English rule (as a full sentence starting with 'Map the layer ...' for a layer mapping, or the free-form rule text otherwise) in ruleText.
+CONFIRM_ALL: the user wants every remaining PENDING row accepted and the review finished. Examples: 'looks good', 'confirm all', 'accept the rest', 'that's fine, proceed', 'done'.
+ACTION: the user is asking for a BricsCAD layer-visibility action (show/hide/isolate layers), not a decision about rows. Examples: 'show only the ones mapped to Expo_Building', 'hide everything else', 'isolate row 3's layer'.
+QUESTION: the user is asking a pure informational question about the table, not deciding anything. Examples: 'what does row 2 map to?', 'how many are low confidence?', 'why is row 4 mapped that way?'.
+ABORT: the user wants to cancel the whole review. Examples: 'stop', 'cancel', 'abort', 'nevermind'.
 
-[DEFINITIONS]
-ACCEPT: The user agrees with this specific mapping and wants to save it and move to the next. Examples: 'yes', 'looks good', 'that's correct', 'sure', 'go ahead', 'perfect', 'agree', 'yep', 'ok', 'fine', 'proceed', 'next', 'accepted', 'good mapping'.
-SKIP: The user wants to skip THIS mapping only (do not save it) and move to the next proposal. They still want to continue reviewing other mappings. Examples: 'no', 'skip', 'skip this', 'not needed', 'not this one', 'next please', 'wrong', 'that's not right', 'try another', 'pass', 'ignore this one'.
-ABORT: The user wants to stop reviewing mappings entirely and stop the whole proofing process. They are cancelling everything, not just this mapping. Examples: 'stop', 'cancel', 'abort', 'nevermind', 'forget it', 'don't continue', 'quit', 'stop reviewing', 'no more mappings', 'cancel everything'.
+RULES:
+- For INCLUDE/EXCLUDE, put the 1-based row numbers mentioned in indexes. Numbers can be referenced by digit or spelled out; comma/space separated.
+- A single reply may only carry ONE intent — if the user both decides some rows AND states a memorize rule in the same message, prefer MEMORIZE only when the rule is clearly a standalone/general rule unrelated to a specific row number; otherwise prefer INCLUDE/EXCLUDE.
+- Do not re-decide rows that are already INCLUDED or EXCLUDED unless the user explicitly changes their mind about that row.
 
-CRITICAL RULE: Only return ABORT if the user explicitly says stop/cancel/abort/quit. SKIP is for skipping just this one mapping.
+OUTPUT FORMAT: strict JSON only, no markdown, no explanation:
+{{ ""intent"": ""INCLUDE|EXCLUDE|MEMORIZE|CONFIRM_ALL|ACTION|QUESTION|ABORT"", ""indexes"": [1,3], ""ruleText"": """" }}";
 
-You MUST output strictly one of these three exact words. Do not output any other text.";
-
-            string prompt = $"USER RESPONSE: {userResponse}";
-
-            var result = await CallModelAsync(systemPrompt, prompt, expectJson: false);
-            return result.Content.Trim().ToUpper();
-        }
-
-        /// <summary>
-        /// Validates a single mapping proposal to determine if it should be presented to user.
-        /// Returns true if valid and should be shown.
-        /// </summary>
-        public async Task<bool> ValidateMappingProposalAsync(string sourceLayer, string proposedTarget)
-        {
-            // Basic validation rules
-            var standardA2zLayers = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                "0", "Defpoints", "Expo_BoothOutline", "Expo_BoothNumber", "Expo_Building",
-                "Expo_Markings", "Expo_View2", "Expo_Column", "Expo_NES", "Expo_MaxBoothOutline", "Expo_MaxBoothNumber"
-            };
-
-            // Ensure proposed target is a valid standard layer
-            if (!standardA2zLayers.Contains(proposedTarget))
-                return false;
-
-            // Ensure source is not already a standard layer
-            if (standardA2zLayers.Contains(sourceLayer))
-                return false;
-
-            // Ensure source and target are different
-            if (sourceLayer.Equals(proposedTarget, StringComparison.OrdinalIgnoreCase))
-                return false;
-
-            return true;
-        }
-
-        public async Task<(string UpdatedMappings, int Tokens, int InputTokens, int OutputTokens)> UpdateMappingsAsync(string currentProposals, string userFeedback)
-        {
-            string systemPrompt = $@"You are the BricsCAD Semantic Mapping Review Agent.
-The system has generated a proposed list of layer mappings natively, but the Human Drafter has intercepted the list and provided English conversational feedback or corrections.
-
-YOUR SOLE JOB is to take the current proposed mappings, apply the Human's conversational corrections, and output the EXACT UPDATED LIST of mappings in the defined JSON format.
-
-CRITICAL RULES (apply in order, stop at the first rule that matches):
-0. PURE AGREEMENT — If the user's message is simply agreeing, affirming, or expressing satisfaction with no specific corrections mentioned (e.g. 'looks great', 'that's correct', 'sure go ahead', 'all good', 'perfect', 'that's right', 'sounds good', 'I agree', 'yep', 'fine by me', 'do it'), you MUST return ALL the current proposed mappings UNCHANGED. Do NOT delete anything.
-1. SPECIFIC INCLUDE — If the user explicitly lists SPECIFIC mappings to include or keep AND their message implies the others should be dropped, you MUST DELETE all other mappings from the array. DO NOT retain mappings the user omitted.
-2. SPECIFIC EXCLUDE — If the user asks to exclude, ignore, or skip specific layers, you MUST physically ERASE those layers from the JSON array.
-3. CANCEL — If the user says 'Cancel', 'Stop', or 'End', you should just return an empty array `[]` in the tool calls.
-
-JSON Schema:
-{{
-  ""tool_calls"": [
-    {{
-      ""command_name"": ""Semantic Mapping"",
-      ""lisp_code"": ""NET:LEARN_LAYER_MAPPING:<SourceLayer>:<TargetLayer>""
-    }}
-  ]
-}}
-
-YOU MUST ONLY OUTPUT VALID JSON MATCHING THIS SCHEMA EXACTLY. DO NOT OUTPUT MARKDOWN, TEXT, OR EXPLANATIONS.
-";
-
-            string prompt = $"CURRENT PROPOSED MAPPINGS:\n{currentProposals}\n\nHUMAN CORRECTION / FEEDBACK:\n{userFeedback}\n\nApply the feedback and regenerate the strict JSON list of `NET:LEARN_LAYER_MAPPING` commands.";
+            string prompt = $"USER REPLY: {userMessage}";
 
             var result = await CallModelAsync(systemPrompt, prompt, expectJson: true);
-            return (result.Content, result.TotalTokens, result.InputTokens, result.OutputTokens);
-        }
+            BricsAI.Core.LoggerService.LogAgentPrompt("MappingTableClassifier", result.Content);
 
-        public async Task<string> ClassifyUserIntentAsync(string userMessage)
-        {
-            string systemPrompt = @"You are the Mapping Review Classifier for BricsAI.
-The system is currently paused, waiting for the user to confirm a list of auto-generated CAD layer mappings before it performs a 'Proofing' action.
+            var response = new TableReviewResponse();
+            try
+            {
+                using var doc = JsonDocument.Parse(result.Content);
+                var root = doc.RootElement;
+                if (root.TryGetProperty("intent", out var intentEl))
+                    response.Intent = (intentEl.GetString() ?? "QUESTION").Trim().ToUpper();
+                if (root.TryGetProperty("indexes", out var idxEl) && idxEl.ValueKind == JsonValueKind.Array)
+                    response.Indexes = idxEl.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.Number).Select(e => e.GetInt32()).ToList();
+                if (root.TryGetProperty("ruleText", out var ruleEl))
+                    response.RuleText = ruleEl.GetString() ?? "";
+            }
+            catch { }
 
-Your ONLY job is to read the user's response and classify their intent into exactly ONE of the following five keywords.
-
-[KEYWORDS]
-CONFIRM
-ABORT
-SKIP_AND_PROCEED
-ACTION_QUESTION
-QUESTION
-
-[DEFINITIONS]
-CONFIRM: The user is agreeing to the specific mappings shown to them, providing minor corrections, or telling the system to go ahead with what was suggested. Examples: 'yes', 'looks good', 'that's fine', 'sure', 'go ahead', 'perfect', 'all correct', 'do it', 'proceed with those', 'keep mapping X to Y', 'agreed', NOT: 'no changes needed' — this does not reference or endorse the mapping content, treat as SKIP_AND_PROCEED.
-ABORT: The user is outright cancelling the operation, stopping the proofing process entirely, or rejecting the mappings without wanting to continue at all. Examples: 'stop', 'cancel', 'abort', 'nevermind', 'forget it', 'don't do anything', 'revert', 'no don't proceed', 'scrap it'.
-SKIP_AND_PROCEED: The user wants to skip or ignore the suggested mappings entirely BUT still wants the proofing action to run without applying any of those mappings. This includes any phrasing that implies 'don't save these, but still proof the drawing'. Examples: 'skip the mappings and proceed', 'ignore those, just proof it', 'don't map anything, just run proofing', 'proceed as-is without mapping', 'just move on', 'forget the suggestions and continue', 'skip this step', 'move forward without mapping', 'proof it without any of those changes', 'don't bother with the mapping, just proof', 'no changes needed', 'no changes needed, proceed', 'no modifications, just proof it', 'leave the mappings, just proceed', 'nothing to change, go ahead'.
-ACTION_QUESTION: The user is asking you to perform a specific BricsCAD action — even if phrased as a question. This includes toggling, showing, hiding, isolating, or renaming layers. Examples: 'Can you show only the layers mapped to Expo_Building?', 'Hide everything else', 'Toggle the Expo_Building ones on', 'Can you isolate those layers for me?', 'Show me only the suggested ones'. Do NOT classify as CONFIRM — the user wants a BricsCAD action, not to approve the whole mapping list.
-QUESTION: The user is asking for pure information or clarification about the mappings. They are NOT asking the system to do something. Examples: 'What does this map to?', 'How many layers are there?', 'What is Expo_Building used for?', 'Which ones map to Expo_Building?', 'Can you explain this mapping?'.
-
-CRITICAL RULE: If the user phrased something as a question but is clearly asking you to DO something in BricsCAD (show, hide, toggle, isolate, rename layers), classify it as ACTION_QUESTION, not QUESTION.
-CRITICAL RULE: SKIP_AND_PROCEED is NOT the same as ABORT. ABORT means the user wants to stop everything. SKIP_AND_PROCEED means they want to skip the mapping step but still proceed with proofing.
-CRITICAL RULE: If the user says something like 'no changes needed', 'no modifications', 'nothing to change', or 'leave it as is' — WITHOUT explicitly saying 'looks good', 'correct', 'that's right', or directly referencing the mapping content — classify as SKIP_AND_PROCEED, NOT CONFIRM. 
-'No changes needed' means don't apply any mapping changes. CONFIRM requires the user to be endorsing the mapping content itself.
-
-You MUST output strictly one of these five exact words. Do not output any other text.";
-
-            string prompt = $"USER MESSAGE: {userMessage}";
-            
-            var result = await CallModelAsync(systemPrompt, prompt, expectJson: false);
-            BricsAI.Core.LoggerService.LogAgentPrompt("MappingClassifier", result.Content);
-            return result.Content.Trim().ToUpper();
+            return (response, result.TotalTokens, result.InputTokens, result.OutputTokens);
         }
 
         /// <summary>

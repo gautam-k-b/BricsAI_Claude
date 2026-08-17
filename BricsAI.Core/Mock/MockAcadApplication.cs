@@ -1,4 +1,4 @@
-namespace BricsAI.McpServer.Mock
+namespace BricsAI.Core.Mock
 {
     public class MockAcadApplication
     {

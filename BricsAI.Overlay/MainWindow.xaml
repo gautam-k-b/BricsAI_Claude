@@ -136,23 +136,39 @@
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
                             <Grid Margin="0,5">
-                                <Border CornerRadius="10" Padding="10" MaxWidth="300">
+                                <Border CornerRadius="10" Padding="10">
                                     <Border.Style>
                                         <Style TargetType="Border">
                                             <Setter Property="Background" Value="#333333"/>
                                             <Setter Property="HorizontalAlignment" Value="Left"/>
+                                            <Setter Property="MaxWidth" Value="300"/>
                                             <Style.Triggers>
                                                 <DataTrigger Binding="{Binding IsUser}" Value="True">
                                                     <Setter Property="Background" Value="#0078D7"/>
                                                     <Setter Property="HorizontalAlignment" Value="Right"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding IsTableContent}" Value="True">
+                                                    <Setter Property="MaxWidth" Value="900"/>
                                                 </DataTrigger>
                                             </Style.Triggers>
                                         </Style>
                                     </Border.Style>
                                     <StackPanel>
                                         <TextBlock Text="{Binding DisplayName}" FontWeight="Bold" Foreground="#DDD" Margin="0,0,0,2"/>
-                                        <TextBox Text="{Binding Content, Mode=OneWay}" IsReadOnly="True" BorderThickness="0" Background="Transparent" Foreground="White" TextWrapping="Wrap" FontSize="12" SelectionBrush="#00A8FF"/>
-                                        
+                                        <TextBox Text="{Binding Content, Mode=OneWay}" IsReadOnly="True" BorderThickness="0" Background="Transparent" Foreground="White" FontSize="12" SelectionBrush="#00A8FF">
+                                            <TextBox.Style>
+                                                <Style TargetType="TextBox">
+                                                    <Setter Property="TextWrapping" Value="Wrap"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsTableContent}" Value="True">
+                                                            <Setter Property="FontFamily" Value="Consolas"/>
+                                                            <Setter Property="TextWrapping" Value="NoWrap"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBox.Style>
+                                        </TextBox>
+
                                         <!-- Animated Thinking Dots -->
                                         <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
                                             <StackPanel.Style>

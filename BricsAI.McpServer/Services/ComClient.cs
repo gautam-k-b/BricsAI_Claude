@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using BricsAI.Core;
-using BricsAI.McpServer.Mock;
+using BricsAI.Core.Mock;
 
 namespace BricsAI.McpServer.Services
 {
@@ -158,7 +158,7 @@ namespace BricsAI.McpServer.Services
                     {
                         var layer = layers.Item(i);
                         string name = layer.Name;
-                        if (!keepLocked.Contains(name))
+                        if (!keepLocked.Contains(name) && !(bool)layer.Freeze)
                         {
                             layer.Lock = false;
                         }

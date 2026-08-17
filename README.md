@@ -1,8 +1,11 @@
-# BricsAI MCP Server for BricsCAD
+# BricsAI Automation Stack for BricsCAD
 
-BricsAI is now an MCP-first local automation stack for BricsCAD proofing workflows.
+BricsAI is a local automation stack for BricsCAD proofing workflows, consumable two ways:
 
-The server runs locally on each user machine and is consumed from Claude Code or Claude Desktop over stdio. It exposes deterministic CAD tools (layer mapping, geometry preparation, proofing, audit, and cleanup) backed by COM automation and version-specific plugin DLLs.
+- **BricsAI.McpServer** — an MCP server consumed from Claude Code or Claude Desktop over stdio, using your Claude subscription instead of a metered API key.
+- **BricsAI.Overlay** — a standalone WPF desktop app with its own 4-agent pipeline (Surveyor, Mapper, Executor, Validator) that calls the Anthropic API directly with your own key.
+
+Both share the same BricsCAD COM automation layer (version-specific plugin DLLs), the same local SQLite knowledge store, and the same in-memory mock CAD backend for development without a running BricsCAD instance.
 
 ## Quick Documents
 
@@ -14,18 +17,23 @@ The server runs locally on each user machine and is consumed from Claude Code or
 ## Current Architecture
 
 ```text
-Claude Code / Claude Desktop
-          |
-          | MCP stdio
-          v
-BricsAI.McpServer (Host + Tool Surface + Prompt Surface)
-          |
-          | STA COM bridge
-          v
-ComClient -> PluginManager -> BricsAI.Plugins.V15Tools / BricsAI.Plugins.V19Tools
-          |
-          v
-BricsCAD ActiveDocument (V15/V19)
+Claude Code / Claude Desktop          BricsAI.Overlay (WPF)
+          |                                    |
+          | MCP stdio                          | Anthropic API (direct)
+          v                                    v
+BricsAI.McpServer                     Surveyor -> Mapper -> MappingReview -> Executor -> Validator
+(Host + Tool Surface + Prompt Surface)         |
+          |                                    |
+          | STA COM bridge                     | (WPF UI thread is already STA)
+          v                                    v
+                    ComClient -> PluginManager
+                              |
+                              v
+        BricsAI.Plugins.V15Tools / BricsAI.Plugins.V19Tools
+                              |
+                              v
+                  BricsCAD ActiveDocument (V15/V19)
+                  -- or -- BricsAI.Core.Mock (BRICSAI_MOCK_CAD=1)
 ```
 
 ### Key Runtime Components
@@ -34,10 +42,15 @@ BricsCAD ActiveDocument (V15/V19)
   - Hosts MCP over stdio
   - Exposes tools and prompts from assembly
   - Forces COM execution through a dedicated STA thread
+- BricsAI.Overlay
+  - WPF chat UI driving the same COM/plugin layer directly (no MCP hop)
+  - Multi-agent pipeline: SurveyorAgent, MapperAgent, MappingReviewAgent, ExecutorAgent, ValidatorAgent
+  - Tabular, index-based mapping review (numbered proposals with confidence/reason, reply with e.g. "include 1,3,5" or "exclude 2,4", mid-review "remember ..." rules, questions, layer-visibility actions)
 - BricsAI.Core
   - IToolPlugin contract
-  - KnowledgeService for persistent mappings and rules
+  - KnowledgeService — SQLite-backed persistent mappings and rules (see Knowledge Store Behavior below)
   - LoggerService for transaction and MCP usage logs
+  - Mock — in-memory mock BricsCAD/AutoCAD COM surface, shared by both apps via `BRICSAI_MOCK_CAD=1`
 - BricsAI.Plugins.V15Tools
   - BricsCAD V15 command implementations
 - BricsAI.Plugins.V19Tools
@@ -47,7 +60,7 @@ BricsCAD ActiveDocument (V15/V19)
 
 ### Layer tools
 
-- list_layers
+- list_layers (excludes frozen layers — see Frozen Layer Handling below)
 - apply_layer_mappings
 - rename_unmapped_layers_to_deleted
 - delete_layers_by_prefix
@@ -74,7 +87,7 @@ BricsCAD ActiveDocument (V15/V19)
 
 ### Proofing tools
 
-- run_full_proofing
+- run_full_proofing (BricsAI.Overlay's Executor agent triggers the same deterministic sequence via the `NET:RUN_FULL_PROOFING` pseudo-command instead of hand-assembling every step in its prompt)
 - clean_deleted_layers
 
 ### Memory tools
@@ -104,14 +117,13 @@ Exports a visual snapshot for a layer into a temp folder and returns file metada
 
 ## Knowledge Store Behavior
 
-Persistent mapping/rule memory is stored in agent_knowledge.txt next to the executing server binary.
+Persistent mapping/rule memory is stored in a local SQLite database, **shared between BricsAI.McpServer and BricsAI.Overlay** — a mapping learned in one app is immediately visible in the other.
 
-Recent improvements:
-
-- startup compaction removes stale duplicate mapping entries
-- write-path deduplicates mapping rules by source layer
-- read-path returns deduplicated latest mapping set
-- cached parse avoids repeated full-file parsing when unchanged
+- Default location: `%LOCALAPPDATA%\BricsAI\agent_knowledge.db`
+- Override: set `BRICSAI_KNOWLEDGE_DIR` to point either app at a different directory (mainly used for test/mock runs)
+- Two tables: `layer_mappings` (upserted by `source_layer`, indexed — no full-file scan needed) and `free_form_rules` (free-form behavioral rules like "always run X before Y")
+- `agent_knowledge.db` at the **solution root** is a checked-in starter/seed copy — it is never read or written by either app at runtime. On a new machine, manually copy it to `%LOCALAPPDATA%\BricsAI\agent_knowledge.db` before first run to seed a fresh install with the accumulated mapping history instead of starting empty.
+- `KnowledgeService.GetFreeFormRules()` returns only the free-form rules (not the full mapping history) for callers that just need behavioral guidance without paying the token cost of dumping every learned mapping into a prompt — layer mappings are applied deterministically via `apply_layer_mappings` / `NET:APPLY_LAYER_MAPPINGS` and don't need to be restated to the model.
 
 ## Usage Logging and Token Estimates
 
@@ -164,6 +176,25 @@ Check status:
 claude mcp get bricsai
 ```
 
+### Run BricsAI.Overlay instead
+
+Set your Anthropic API key in `BricsAI.Overlay\appsettings.json` (`Anthropic.ApiKey` — gitignored, never commit a real key), then run:
+
+```powershell
+dotnet run --project .\BricsAI.Overlay\BricsAI.Overlay.csproj
+```
+
+### Develop/test without a running BricsCAD instance
+
+Both apps support an in-memory mock CAD backend seeded with a representative drawing (standard A2Z layers, a few vendor layers, booth outlines with one intentionally missing a number). Set the environment variable before launch:
+
+```powershell
+$env:BRICSAI_MOCK_CAD = "1"
+dotnet run --project .\BricsAI.Overlay\BricsAI.Overlay.csproj
+```
+
+Real API calls still happen (mock mode only replaces the BricsCAD COM layer), so agent responses and token usage are real.
+
 ## Recommended End User Flow
 
 1. Run read-only preflight summary
@@ -175,16 +206,25 @@ claude mcp get bricsai
 7. Optionally export layer snapshots for visual review
 8. Optionally run clean_deleted_layers only on explicit approval
 
+## Frozen Layer Handling
+
+Frozen layers are treated as fully hands-off across both apps:
+
+- `list_layers` / `GET_LAYERS` never lists them, so they're never proposed for mapping
+- `rename_unmapped_layers_to_deleted` and `unlock_layers_by_prefix` skip them
+- The startup "unlock everything except protected booth layers" pass never unlocks a frozen layer
+- Geometry/selection tools (`prepare_geometry`, `apply_layer_mappings`, `select_*`) already exclude frozen-layer entities natively via BricsCAD's own `ssget`/`SelectionSets.Select` behavior — no extra filtering needed there
+
 ## Troubleshooting
 
 ### Build fails with MSB3021/MSB3027 file lock
 
-Cause: running BricsAI.McpServer processes lock exe or plugin DLLs in bin/Debug.
+Cause: running BricsAI.McpServer or BricsAI.Overlay processes lock exe or plugin DLLs in bin/Debug.
 
 Fix:
 
 ```powershell
-Get-Process BricsAI.McpServer -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process BricsAI.McpServer,BricsAI.Overlay -ErrorAction SilentlyContinue | Stop-Process -Force
 dotnet build BricsAI.sln
 ```
 
@@ -193,3 +233,7 @@ dotnet build BricsAI.sln
 - Ensure BricsCAD is open with an active document
 - Ensure server is not running in mock mode unless intentional
 - Restart Claude MCP session after rebuilding binaries
+
+### BricsAI.Overlay: agent responses look empty or proofing does nothing
+
+Make sure you're on a build that includes the `AnthropicRuntime` response-parsing fix (v3.5.0+) — earlier builds silently discarded every Claude response due to an SDK content-block extraction bug, while still consuming real API tokens.

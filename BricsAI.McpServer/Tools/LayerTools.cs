@@ -8,7 +8,7 @@ namespace BricsAI.McpServer.Tools
     [McpServerToolType]
     public static class LayerTools
     {
-        [McpServerTool(Name = "list_layers"), Description("Returns every layer name in the active BricsCAD drawing.")]
+        [McpServerTool(Name = "list_layers"), Description("Returns every layer name in the active BricsCAD drawing, excluding frozen layers.")]
         public static Task<string> ListLayers(ComClient comClient, StaComHost sta)
             => ToolExec.RunAsync(comClient, sta, "NET:GET_LAYERS");
 

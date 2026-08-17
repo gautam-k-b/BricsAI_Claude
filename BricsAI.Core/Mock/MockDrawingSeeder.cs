@@ -1,4 +1,4 @@
-namespace BricsAI.McpServer.Mock
+namespace BricsAI.Core.Mock
 {
     /// <summary>
     /// Builds a plausible sample exhibition drawing so every tool has real data to operate on:

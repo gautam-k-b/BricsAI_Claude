@@ -38,7 +38,7 @@ namespace BricsAI.Overlay.Services
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Failed to load plugin {file}: {ex.Message}");
+                    LoggerService.LogTransaction("PLUGIN", $"Failed to load plugin {file}: {ex.Message}");
                 }
             }
         }

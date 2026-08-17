@@ -43,7 +43,7 @@ namespace BricsAI.Overlay.ViewModels
         }
 
         public bool IsNotBusy => !IsBusy;
-        public bool IsQuickActionsEnabled => !IsBusy && !_isInOneByOneMappingReview;
+        public bool IsQuickActionsEnabled => !IsBusy && !_isInTableMappingReview;
 
         public ICommand SendCommand { get; }
         
@@ -59,18 +59,19 @@ namespace BricsAI.Overlay.ViewModels
         private readonly MapperAgent _mapper;
         private readonly MappingReviewAgent _mappingReviewAgent;
 
-        private bool _isAwaitingMappingConfirmation = false;
         private string _pendingMappingCommands = "";
         private string _originalProofingCommand = "";
         private string _lastKnownMappings = ""; // Persists across failures for context recovery
 
-        // One-by-one mapping review state
-        private bool _isInOneByOneMappingReview = false;
-        private int _currentMappingIndex = 0;
+        // Tabular mapping review state — a single numbered table is shown once, and the user can
+        // reply across one or more turns (comma-separated indexes, a memorize instruction, a layer
+        // action, a question, "confirm all", or "abort") until every row has been decided.
+        private bool _isInTableMappingReview = false;
         private List<(string Source, string Target)> _mappingQueue = new List<(string, string)>();
-        private List<(string Source, string Target)> _acceptedMappings = new List<(string, string)>();
-        private List<(string Source, string Target)> _skippedMappings = new List<(string, string)>();
+        private HashSet<int> _includedIndexes = new HashSet<int>();
+        private HashSet<int> _excludedIndexes = new HashSet<int>();
         private Dictionary<string, string> _mappingReasons = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private Dictionary<string, string> _mappingConfidence = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         public MainViewModel()
         {
@@ -111,190 +112,116 @@ namespace BricsAI.Overlay.ViewModels
 
             try
             {
-                // --- INTERACTIVE ONE-BY-ONE MAPPING REVIEW INTERCEPTION ---
-                if (_isInOneByOneMappingReview && _currentMappingIndex < _mappingQueue.Count)
+                // --- INTERACTIVE TABULAR MAPPING REVIEW INTERCEPTION ---
+                if (_isInTableMappingReview && _mappingQueue.Count > 0)
                 {
                     IsBusy = true;
 
-                    var (sourceLayer, targetLayer) = _mappingQueue[_currentMappingIndex];
-                    string intent = await _mappingReviewAgent.ClassifySingleMappingResponseAsync(userMessage, sourceLayer, targetLayer);
+                    var (reviewResponse, tokens, inputTokens, outputTokens) = await _mappingReviewAgent.ClassifyTableReviewResponseAsync(
+                        userMessage, _mappingQueue, _mappingConfidence, _mappingReasons, _includedIndexes, _excludedIndexes);
 
-                    if (intent == "ACCEPT")
+                    switch (reviewResponse.Intent)
                     {
-                        _acceptedMappings.Add((sourceLayer, targetLayer));
-                        BricsAI.Core.KnowledgeService.SaveLearning($"Map the layer '{sourceLayer}' to standard layer '{targetLayer}'.");
-                        Messages.Add(new ChatMessage { Role = "Assistant", Content = $"✅ Saved mapping: **{sourceLayer}** ➔ **{targetLayer}**" });
-                        _currentMappingIndex++;
-
-                        if (_currentMappingIndex < _mappingQueue.Count)
+                        case "INCLUDE":
                         {
-                            var (nextSource, nextTarget) = _mappingQueue[_currentMappingIndex];
-                            string nextReason = _mappingReasons.TryGetValue(nextSource, out var nr) ? nr : "";
-                            string nextReasonText = string.IsNullOrEmpty(nextReason) ? "" : $"\n📌 *Evidence: {nextReason}*\n";
-                            Messages.Add(new ChatMessage 
-                            { 
-                                Role = "Assistant", 
-                                Content = $"🔍 Next mapping proposal ({_currentMappingIndex + 1}/{_mappingQueue.Count}):\n\nMap **{nextSource}** to **{nextTarget}**?{nextReasonText}\n\n(Reply 'yes', 'no', or 'cancel')" 
-                            });
+                            var applied = new List<int>();
+                            foreach (var idx in reviewResponse.Indexes)
+                            {
+                                if (idx >= 1 && idx <= _mappingQueue.Count)
+                                {
+                                    _includedIndexes.Add(idx);
+                                    _excludedIndexes.Remove(idx);
+                                    applied.Add(idx);
+                                }
+                            }
+                            Messages.Add(new ChatMessage { Role = "Assistant", Content = applied.Count > 0 ? $"✅ Included row(s): {string.Join(", ", applied)}" : "I couldn't match any valid row numbers in that — please reference the row numbers from the table." });
+                            break;
                         }
-                        else
+                        case "EXCLUDE":
                         {
-                            CompleteMappingReview();
+                            var applied = new List<int>();
+                            foreach (var idx in reviewResponse.Indexes)
+                            {
+                                if (idx >= 1 && idx <= _mappingQueue.Count)
+                                {
+                                    _excludedIndexes.Add(idx);
+                                    _includedIndexes.Remove(idx);
+                                    applied.Add(idx);
+                                }
+                            }
+                            Messages.Add(new ChatMessage { Role = "Assistant", Content = applied.Count > 0 ? $"⏭️ Excluded row(s): {string.Join(", ", applied)}" : "I couldn't match any valid row numbers in that — please reference the row numbers from the table." });
+                            break;
                         }
+                        case "MEMORIZE":
+                        {
+                            if (!string.IsNullOrWhiteSpace(reviewResponse.RuleText))
+                            {
+                                BricsAI.Core.KnowledgeService.SaveLearning(reviewResponse.RuleText);
+                                Messages.Add(new ChatMessage { Role = "Assistant", Content = $"🧠 Remembered: {reviewResponse.RuleText}\n\n📋 The mapping review is still open — continue deciding the remaining rows." });
+                            }
+                            break;
+                        }
+                        case "CONFIRM_ALL":
+                        {
+                            for (int i = 1; i <= _mappingQueue.Count; i++)
+                                if (!_excludedIndexes.Contains(i)) _includedIndexes.Add(i);
+                            break;
+                        }
+                        case "ACTION":
+                        {
+                            var actionMsg = new ChatMessage { Role = "Assistant", Content = "🎯 Got it! Performing that layer action in BricsCAD...", IsThinking = true };
+                            Messages.Add(actionMsg);
+                            try
+                            {
+                                var (actionPlan, _, _, _) = await _mappingReviewAgent.BuildLayerActionPlanAsync(_pendingMappingCommands, userMessage);
+                                IProgress<string> actionProgress = new Progress<string>(update => { actionMsg.Content += $"\n{update}"; });
+                                string result = await Task.Run(() => _comClient.ExecuteActionAsync(actionPlan, actionProgress));
+                                actionMsg.IsThinking = false;
+                                actionMsg.Content = $"✅ Done! {result}\n\n📋 The mapping review is still open.";
+                            }
+                            catch (Exception ex)
+                            {
+                                actionMsg.IsThinking = false;
+                                actionMsg.Content = $"⚠️ Could not execute layer action: {ex.Message}";
+                            }
+                            break;
+                        }
+                        case "QUESTION":
+                        {
+                            var answerMsg = new ChatMessage { Role = "Assistant", Content = "🤔 Let me check the proposed mappings...", IsThinking = true };
+                            Messages.Add(answerMsg);
+                            try
+                            {
+                                string answer = await _mappingReviewAgent.AnswerMappingQuestionAsync(_pendingMappingCommands, userMessage);
+                                answerMsg.IsThinking = false;
+                                answerMsg.Content = $"💬 {answer}\n\n📋 The mapping review is still open.";
+                            }
+                            catch (Exception ex)
+                            {
+                                answerMsg.IsThinking = false;
+                                answerMsg.Content = $"⚠️ Could not answer question: {ex.Message}";
+                            }
+                            break;
+                        }
+                        case "ABORT":
+                            AbortMappingReview();
+                            IsBusy = false;
+                            return;
                     }
-                    else if (intent == "SKIP")
-                    {
-                        _skippedMappings.Add((sourceLayer, targetLayer));
-                        Messages.Add(new ChatMessage { Role = "Assistant", Content = $"⏭️ Skipped mapping: **{sourceLayer}** ➔ **{targetLayer}** (will not be saved)" });
-                        _currentMappingIndex++;
 
-                        if (_currentMappingIndex < _mappingQueue.Count)
-                        {
-                            var (nextSource, nextTarget) = _mappingQueue[_currentMappingIndex];
-                            string nextReason = _mappingReasons.TryGetValue(nextSource, out var nr) ? nr : "";
-                            string nextReasonText = string.IsNullOrEmpty(nextReason) ? "" : $"\n📌 *Evidence: {nextReason}*\n";
-                            Messages.Add(new ChatMessage 
-                            { 
-                                Role = "Assistant", 
-                                Content = $"🔍 Next mapping proposal ({_currentMappingIndex + 1}/{_mappingQueue.Count}):\n\nMap **{nextSource}** to **{nextTarget}**?{nextReasonText}\n\n(Reply 'yes', 'no', or 'cancel')" 
-                            });
-                        }
-                        else
-                        {
-                            CompleteMappingReview();
-                        }
-                    }
-                    else if (intent == "ABORT")
+                    bool allDecided = _includedIndexes.Count + _excludedIndexes.Count >= _mappingQueue.Count;
+                    if (allDecided)
                     {
-                        AbortMappingReview();
+                        CompleteMappingReview();
+                    }
+                    else if (reviewResponse.Intent == "INCLUDE" || reviewResponse.Intent == "EXCLUDE")
+                    {
+                        Messages.Add(new ChatMessage { Role = "Assistant", Content = FormatMappingTable(), IsTableContent = true });
                     }
 
                     IsBusy = false;
                     return;
                 }
-
-                // --- INTERACTIVE MAPPING REVIEW INTERCEPTION (legacy bulk mode) ---
-
-            if (_isAwaitingMappingConfirmation)
-            {
-                IsBusy = true; // Lock UI while LLM decides intent
-
-                var classifier = new BricsAI.Overlay.Services.Agents.MappingReviewAgent();
-                string intent = await classifier.ClassifyUserIntentAsync(userMessage);
-
-                if (intent == "ABORT")
-                {
-                    _isAwaitingMappingConfirmation = false;
-                    _pendingMappingCommands = "";
-                    _originalProofingCommand = "";
-                    _lastKnownMappings = ""; // Clear saved context — user explicitly cancelled
-                    Messages.Add(new ChatMessage { Role = "Assistant", Content = "🛑 Mapping review cancelled. Dashboard unlocked. Your next proofing request will start a fresh scan." });
-                    IsBusy = false;
-                    return;
-                }
-                else if (intent == "SKIP_AND_PROCEED")
-                {
-                    _isAwaitingMappingConfirmation = false;
-                    _pendingMappingCommands = "";
-                    Messages.Add(new ChatMessage { Role = "Assistant", Content = "⏭️ You got it! Skipping the manual map review and proceeding directly to proofing..." });
-                    IsBusy = false;
-                    await ExecuteQuickAction(_originalProofingCommand + " _skipMappingReviewSequence_");
-                    return;
-                }
-                else if (intent == "ACTION_QUESTION")
-                {
-                    // User asked to DO something with the layers (e.g., "show only Expo_Building layers")
-                    // Execute the action in BricsCAD, then keep the review open.
-                    var actionMsg = new ChatMessage { Role = "Assistant", Content = "🎯 Got it! Performing that layer action in BricsCAD...", IsThinking = true };
-                    Messages.Add(actionMsg);
-
-                    try
-                    {
-                        var agent = new BricsAI.Overlay.Services.Agents.MappingReviewAgent();
-                        var (actionPlan, tokens, inputTokens, outputTokens) = await agent.BuildLayerActionPlanAsync(_pendingMappingCommands, userMessage);
-
-                        IProgress<string> actionProgress = new Progress<string>(update => { actionMsg.Content += $"\n{update}"; });
-                        string result = await Task.Run(() => _comClient.ExecuteActionAsync(actionPlan, actionProgress));
-                        actionMsg.IsThinking = false;
-                        actionMsg.Content = $"✅ Done! {result}\n\n📋 The mapping review is still open. The layers listed above are now visible in BricsCAD.\nReply **'yes'** to confirm all mappings, **'cancel'** to abort, or ask another question.";
-                    }
-                    catch (Exception ex)
-                    {
-                        actionMsg.IsThinking = false;
-                        actionMsg.Content = $"⚠️ Could not execute layer action: {ex.Message}";
-                    }
-
-                    // Keep review open
-                    IsBusy = false;
-                    return;
-                }
-                else if (intent == "QUESTION")
-                {
-                    // User asked a pure informational question — answer in text, keep review open.
-                    var answerMsg = new ChatMessage { Role = "Assistant", Content = "🤔 Let me check the proposed mappings...", IsThinking = true };
-                    Messages.Add(answerMsg);
-
-                    try
-                    {
-                        var agent = new BricsAI.Overlay.Services.Agents.MappingReviewAgent();
-                        string answer = await agent.AnswerMappingQuestionAsync(_pendingMappingCommands, userMessage);
-                        answerMsg.IsThinking = false;
-                        answerMsg.Content = $"💬 {answer}\n\n📋 The mapping review is still open. Reply **'yes'** to confirm, **'cancel'** to abort, or ask anything else.";
-                    }
-                    catch (Exception ex)
-                    {
-                        answerMsg.IsThinking = false;
-                        answerMsg.Content = $"⚠️ Could not answer question: {ex.Message}";
-                    }
-
-                    // Keep review open
-                    IsBusy = false;
-                    return;
-                }
-                else // CONFIRM (or anything the LLM defaults to)
-                {
-                    var confirmMsg = new ChatMessage { Role = "Assistant", Content = "✅ Saving finalized mappings...", IsThinking = true };
-                    Messages.Add(confirmMsg);
-                    IProgress<string> confirmProgress = new Progress<string>(update => { confirmMsg.Content += $"\n{update}"; });
-                    
-                    try
-                    {
-                        var doc = System.Text.Json.JsonDocument.Parse(_pendingMappingCommands);
-                        if (doc.RootElement.GetProperty("tool_calls").GetArrayLength() > 0)
-                        {
-                            // Always pass the user's natural language response to UpdateMappingsAsync.
-                            // The LLM already classified intent as CONFIRM — UpdateMappingsAsync will
-                            // keep all mappings if the user is purely agreeing ("sure", "that's fine",
-                            // "all good", etc.) or apply selective corrections if they gave feedback
-                            // ("yes but drop the entrance layer"). No keyword matching needed here.
-                            var agent = new BricsAI.Overlay.Services.Agents.MappingReviewAgent();
-                            var result = await agent.UpdateMappingsAsync(_pendingMappingCommands, userMessage);
-                            await Task.Run(() => _comClient.ExecuteActionAsync(result.UpdatedMappings, confirmProgress));
-                        }
-                        else
-                        {
-                            Messages.Add(new ChatMessage { Role = "Assistant", Content = "No mappings were defined to save. Continuing..." });
-                            confirmProgress.Report("No mappings to save.");
-                        }
-                    }
-                    catch
-                    {
-                        // Ignore malformed JSON instead of crashing
-                    }
-                    
-                    confirmMsg.IsThinking = false;
-
-                    _isAwaitingMappingConfirmation = false;
-                    _pendingMappingCommands = "";
-                    
-                    IsBusy = false; // Unlock so ExecuteQuickAction isn't blocked by its guard
-                    
-                    // Resume original proofing recursively, but flag it to skip mapping review
-                    // to prevent an infinite loop where Surveyor finds the same unmapped layers again.
-                    await ExecuteQuickAction(_originalProofingCommand + " _skipMappingReviewSequence_");
-                    return;
-                }
-            }
 
             // --- CONTEXT RECOVERY: Restore previous mapping suggestions if the last session failed ---
             // If the user re-prompts proofing and we have stored mappings from a previous failed attempt,
@@ -312,21 +239,20 @@ namespace BricsAI.Overlay.ViewModels
             {
                 _pendingMappingCommands = _lastKnownMappings;
                 _originalProofingCommand = cleanUserMessageEarly;
-                
-                // Initialize one-by-one mapping review for resumed session
-                _isInOneByOneMappingReview = true;
-                _currentMappingIndex = 0;
+
+                // Resume the tabular mapping review for this session
+                _isInTableMappingReview = true;
                 _mappingQueue = ExtractMappingPairsFromJson(_lastKnownMappings);
-                _acceptedMappings.Clear();
-                _skippedMappings.Clear();
+                _includedIndexes.Clear();
+                _excludedIndexes.Clear();
 
                 if (_mappingQueue.Count > 0)
                 {
-                    var (firstSource, firstTarget) = _mappingQueue[0];
                     Messages.Add(new ChatMessage
                     {
                         Role = "Assistant",
-                        Content = $"🔁 **Resuming mapping review from previous session** ({_mappingQueue.Count} proposals)\n\n**Proposal 1 of {_mappingQueue.Count}:**\n\nMap **{firstSource}** to **{firstTarget}**?\n\n(Reply 'yes' to accept, 'no' to skip, or 'cancel' to abort all mappings)"
+                        Content = $"🔁 **Resuming mapping review from previous session**\n\n{FormatMappingTable()}",
+                        IsTableContent = true
                     });
                 }
                 else
@@ -336,9 +262,10 @@ namespace BricsAI.Overlay.ViewModels
                         Role = "Assistant",
                         Content = $"🔁 **Resuming from previous session** — no mapping proposals found. Proceeding with proofing..."
                     });
-                    _isInOneByOneMappingReview = false;
+                    _isInTableMappingReview = false;
                 }
 
+                OnPropertyChanged(nameof(IsQuickActionsEnabled));
                 IsBusy = false;
                 return;
             }
@@ -552,10 +479,13 @@ namespace BricsAI.Overlay.ViewModels
                     .Select(m => $@"{{ ""command_name"": ""Semantic Mapping"", ""lisp_code"": ""{m.LispCode}"" }}")
                     .ToList();
 
-                // Store reasons keyed by source layer
+                // Store reasons and confidence keyed by source layer
                 foreach (var m in allMappings)
+                {
                     if (!string.IsNullOrEmpty(m.Reason))
                         _mappingReasons[m.SourceLayer] = m.Reason;
+                    _mappingConfidence[m.SourceLayer] = m.Confidence;
+                }
 
                 if (pendingToolCalls.Any())
                 {
@@ -563,12 +493,11 @@ namespace BricsAI.Overlay.ViewModels
                     _lastKnownMappings = _pendingMappingCommands; // Persist for context recovery on failure
                     _originalProofingCommand = userMessage;
 
-                    // Initialize one-by-one mapping review
-                    _isInOneByOneMappingReview = true;
-                    _currentMappingIndex = 0;
+                    // Initialize the tabular mapping review
+                    _isInTableMappingReview = true;
                     _mappingQueue = ExtractMappingPairsFromJson(_pendingMappingCommands);
-                    _acceptedMappings.Clear();
-                    _skippedMappings.Clear();
+                    _includedIndexes.Clear();
+                    _excludedIndexes.Clear();
 
                     if (_mappingQueue.Count > 0)
                     {
@@ -576,13 +505,11 @@ namespace BricsAI.Overlay.ViewModels
                         double surveySeconds = Math.Round(stopwatch.Elapsed.TotalSeconds, 1);
                         Messages.Add(new ChatMessage { Role = "Assistant", Content = $"📊 Performance: {totalTokens} API tokens consumed ({totalInputTokens} Input, {totalOutputTokens} Output) mapping {unknownLayers.Count} layers. Surveyor completed in {surveySeconds} seconds." });
 
-                        var (firstSource, firstTarget) = _mappingQueue[0];
-                        string firstReason = _mappingReasons.TryGetValue(firstSource, out var fr) ? fr : "";
-                        string firstReasonText = string.IsNullOrEmpty(firstReason) ? "" : $"\n📌 *Evidence: {firstReason}*\n";
-                        Messages.Add(new ChatMessage 
-                        { 
-                            Role = "Assistant", 
-                            Content = $"🛑 **Human Review Required** — Mapping proposals ahead\n\nI've identified {_mappingQueue.Count} unknown layer(s) that need mapping.\n\n**Proposal 1 of {_mappingQueue.Count}:**\n\nMap **{firstSource}** to **{firstTarget}**?{firstReasonText}\n\n(Reply 'yes' to accept, 'no' to skip, or 'cancel' to abort all mappings)" 
+                        Messages.Add(new ChatMessage
+                        {
+                            Role = "Assistant",
+                            Content = $"🛑 **Human Review Required** — {_mappingQueue.Count} unknown layer(s) need mapping\n\n{FormatMappingTable()}",
+                            IsTableContent = true
                         });
                     }
 
@@ -734,25 +661,32 @@ namespace BricsAI.Overlay.ViewModels
 
         private void CompleteMappingReview()
         {
-            _isInOneByOneMappingReview = false;
-            _currentMappingIndex = 0;
+            int acceptedCount = 0;
+            for (int i = 1; i <= _mappingQueue.Count; i++)
+            {
+                if (_includedIndexes.Contains(i))
+                {
+                    var (source, target) = _mappingQueue[i - 1];
+                    BricsAI.Core.KnowledgeService.SaveLearning($"Map the layer '{source}' to standard layer '{target}'.");
+                    acceptedCount++;
+                }
+            }
+            int skippedCount = _mappingQueue.Count - acceptedCount;
+
+            _isInTableMappingReview = false;
             _mappingQueue.Clear();
             _mappingReasons.Clear();
+            _mappingConfidence.Clear();
+            _includedIndexes.Clear();
+            _excludedIndexes.Clear();
             OnPropertyChanged(nameof(IsQuickActionsEnabled));
-            
-            int acceptedCount = _acceptedMappings.Count;
-            int skippedCount = _skippedMappings.Count;
 
-            _acceptedMappings.Clear();
-            _skippedMappings.Clear();
-
-            Messages.Add(new ChatMessage 
-            { 
-                Role = "Assistant", 
-                Content = $"✨ Mapping review complete!\n\n📊 Summary:\n• **Accepted:** {acceptedCount} mappings\n• **Skipped:** {skippedCount} mappings\n\n⏭️ Proceeding with proofing..." 
+            Messages.Add(new ChatMessage
+            {
+                Role = "Assistant",
+                Content = $"✨ Mapping review complete!\n\n📊 Summary:\n• **Included:** {acceptedCount} mappings\n• **Excluded:** {skippedCount} mappings\n\n⏭️ Proceeding with proofing..."
             });
 
-            _isAwaitingMappingConfirmation = false;
             _pendingMappingCommands = "";
             IsBusy = false;
 
@@ -762,25 +696,50 @@ namespace BricsAI.Overlay.ViewModels
 
         private void AbortMappingReview()
         {
-            _isInOneByOneMappingReview = false;
-            _currentMappingIndex = 0;
+            _isInTableMappingReview = false;
             _mappingQueue.Clear();
             _mappingReasons.Clear();
+            _mappingConfidence.Clear();
+            _includedIndexes.Clear();
+            _excludedIndexes.Clear();
             OnPropertyChanged(nameof(IsQuickActionsEnabled));
-            _acceptedMappings.Clear();
-            _skippedMappings.Clear();
             _pendingMappingCommands = "";
             _originalProofingCommand = "";
             _lastKnownMappings = "";
 
-            Messages.Add(new ChatMessage 
-            { 
-                Role = "Assistant", 
-                Content = "🛑 **Mapping review cancelled by user.** All proposed mappings were discarded. Dashboard unlocked. Your next proofing request will start a fresh scan." 
+            Messages.Add(new ChatMessage
+            {
+                Role = "Assistant",
+                Content = "🛑 **Mapping review cancelled by user.** All proposed mappings were discarded. Dashboard unlocked. Your next proofing request will start a fresh scan."
             });
 
             IsBusy = false;
         }
+
+        /// <summary>
+        /// Renders the current mapping queue as a fixed-width, monospace-friendly table
+        /// (rendered via ChatMessage.IsTableContent) with per-row confidence, the Mapper's
+        /// reasoning for the suggestion, and decision status.
+        /// </summary>
+        private string FormatMappingTable()
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine("#   Source Layer                  Target Layer     Confidence  Reason                               Status");
+            sb.AppendLine("--  -----------------------------  ---------------  ----------  -----------------------------------  --------");
+            for (int i = 0; i < _mappingQueue.Count; i++)
+            {
+                int idx = i + 1;
+                var (source, target) = _mappingQueue[i];
+                string confidence = _mappingConfidence.TryGetValue(source, out var c) ? c : "Low";
+                string reason = _mappingReasons.TryGetValue(source, out var r) && !string.IsNullOrWhiteSpace(r) ? r : "—";
+                string status = _includedIndexes.Contains(idx) ? "included" : _excludedIndexes.Contains(idx) ? "excluded" : "pending";
+                sb.AppendLine($"{idx,-3} {Truncate(source, 29),-29}  {Truncate(target, 15),-15}  {confidence,-10}  {Truncate(reason, 37),-37}  {status}");
+            }
+            sb.Append("\nReply with row numbers to include/exclude (e.g. \"include 1,3,5\" or \"exclude 2,4\"), say \"confirm all\" to accept everything pending, \"cancel\" to abort, or tell me a rule to remember at any point.");
+            return sb.ToString();
+        }
+
+        private static string Truncate(string s, int max) => s.Length <= max ? s : s.Substring(0, max - 1) + "…";
 
         private List<(string Source, string Target)> ExtractMappingPairsFromJson(string jsonMappings)
         {
