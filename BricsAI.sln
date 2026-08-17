@@ -11,6 +11,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BricsAI.Plugins.V15Tools", 
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BricsAI.Plugins.V19Tools", "BricsAI.Plugins.V19Tools\BricsAI.Plugins.V19Tools.csproj", "{2D422B69-913A-4C42-A452-460FBD2A26A2}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BricsAI.Overlay", "BricsAI.Overlay\BricsAI.Overlay.csproj", "{20338FAC-4DF4-4844-A29A-BD648166E2FE}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -69,6 +71,18 @@ Global
 		{2D422B69-913A-4C42-A452-460FBD2A26A2}.Release|x64.Build.0 = Release|Any CPU
 		{2D422B69-913A-4C42-A452-460FBD2A26A2}.Release|x86.ActiveCfg = Release|Any CPU
 		{2D422B69-913A-4C42-A452-460FBD2A26A2}.Release|x86.Build.0 = Release|Any CPU
+		{20338FAC-4DF4-4844-A29A-BD648166E2FE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{20338FAC-4DF4-4844-A29A-BD648166E2FE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{20338FAC-4DF4-4844-A29A-BD648166E2FE}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{20338FAC-4DF4-4844-A29A-BD648166E2FE}.Debug|x64.Build.0 = Debug|Any CPU
+		{20338FAC-4DF4-4844-A29A-BD648166E2FE}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{20338FAC-4DF4-4844-A29A-BD648166E2FE}.Debug|x86.Build.0 = Debug|Any CPU
+		{20338FAC-4DF4-4844-A29A-BD648166E2FE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{20338FAC-4DF4-4844-A29A-BD648166E2FE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{20338FAC-4DF4-4844-A29A-BD648166E2FE}.Release|x64.ActiveCfg = Release|Any CPU
+		{20338FAC-4DF4-4844-A29A-BD648166E2FE}.Release|x64.Build.0 = Release|Any CPU
+		{20338FAC-4DF4-4844-A29A-BD648166E2FE}.Release|x86.ActiveCfg = Release|Any CPU
+		{20338FAC-4DF4-4844-A29A-BD648166E2FE}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

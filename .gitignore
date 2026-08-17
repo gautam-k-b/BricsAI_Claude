@@ -3,6 +3,7 @@ bin/
 obj/
 *.dll
 *.pdb
+*_wpftmp.csproj
 
 # Visual Studio / VS Code
 .vs/

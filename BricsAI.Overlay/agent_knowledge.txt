@@ -1,0 +1,181 @@
+--- BricsAI Learned Rules & Preferences ---
+
+[2026-03-12 22:11:25] Map the layer 'UnknownLayerName' to standard layer 'A2ZLayerName'.
+[2026-03-12 22:11:25] Map the layer 'l1xxxx' to standard layer 'Expo_BoothOutline'.
+[2026-03-12 22:11:25] Map the layer 'building text' to standard layer 'Expo_Markings'.
+[2026-03-12 22:11:25] Map the layer 'show_title' to standard layer 'Expo_Markings'.
+[2026-03-12 22:11:25] Map the layer 'A-DOOR' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'S-COLS' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'Q-SPCQ' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'A-GENM' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'E-ELEC-FIXT' to standard layer 'Expo_View2'.
+[2026-03-12 22:11:25] Map the layer 'A-FLOR-HRAL' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'A-DETL' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'E-LITE-EQPM' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'A-DOOR-FRAM' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'A-DETL-MBND' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'A-DETL-GENF' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'G-ANNO-TEXT' to standard layer 'Expo_Markings'.
+[2026-03-12 22:11:25] Map the layer 'bldg_fire' to standard layer 'Expo_View2'.
+[2026-03-12 22:11:25] Map the layer 'bldg_text' to standard layer 'Expo_Markings'.
+[2026-03-12 22:11:25] Map the layer 'bldg_walls' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 't-airwalls' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'bldg_elec' to standard layer 'Expo_View2'.
+[2026-03-12 22:11:25] Map the layer '1 Show_Exhibit' to standard layer 'Expo_BoothOutline'.
+[2026-03-12 22:11:25] Map the layer '1 Show_Text' to standard layer 'Expo_BoothNumber'.
+[2026-03-12 22:11:25] Map the layer 'LACC West-Concourse$0$Bldg_Text' to standard layer 'Expo_Markings'.
+[2026-03-12 22:11:25] Map the layer 'LACC West-Concourse$0$Bldg_Fire' to standard layer 'Expo_View2'.
+[2026-03-12 22:11:25] Map the layer '1 Show_Title' to standard layer 'Expo_Markings'.
+[2026-03-12 22:11:25] Map the layer '1 Show_Furniture' to standard layer 'Expo_ImageMarkings'.
+[2026-03-12 22:11:25] Map the layer 'LACC West-Concourse$0$Bldg_Airwall' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'LACC West-Concourse$0$Bldg_Column' to standard layer 'Expo_Column'.
+[2026-03-12 22:11:25] Map the layer 'LACC West-Concourse$0$Bldg_Door' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'LACC West-Concourse$0$Bldg_Hall Name' to standard layer 'Expo_Markings'.
+[2026-03-12 22:11:25] Map the layer 'LACC West-Concourse$0$Bldg_Intl Symbol' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'LACC West-Concourse$0$Bldg_Door Freight' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'LACC West-Concourse$0$Bldg_Stairs' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'LACC West-Concourse$0$Bldg_Glass' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'LACC West-Concourse$0$Bldg_Utility Floor Port' to standard layer 'Expo_View2'.
+[2026-03-12 22:11:25] Map the layer 'LACC West-Concourse$0$Bldg_Utility Electrical' to standard layer 'Expo_View2'.
+[2026-03-12 22:11:25] Map the layer 'LACC West-Concourse$0$Bldg_Utility Plumbing' to standard layer 'Expo_View2'.
+[2026-03-12 22:11:25] Map the layer 'LACC West-Concourse$0$Bldg_Utility' to standard layer 'Expo_View2'.
+[2026-03-12 22:11:25] Map the layer 'LACC West-Concourse$0$Bldg_Wall' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'LACC West-Concourse$0$Bldg_Feature Permanent' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'LACC West-Concourse$0$Bldg_Feature Movable' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'LACC West-Concourse$0$Bldg_Area Keep Clear' to standard layer 'Expo_View2'.
+[2026-03-12 22:11:25] Map the layer 'LACC West-Concourse$0$Bldg_Door Roll-Up' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'LACC West-Concourse$0$bldg_international-symbols' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'LACC West-Concourse$0$Bldg_Glass-Railing' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'LACC West-Concourse$0$Bldg_Keep Clear lines on floor' to standard layer 'Expo_View2'.
+[2026-03-12 22:11:25] Map the layer 'LACC West-Concourse$0$Bldg_Construction' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'LACC West-Concourse' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer '0-S-CL' to standard layer 'Expo_Column'.
+[2026-03-12 22:11:25] Map the layer '214-A-WA-INT' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer '214-A-WA-EXT' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer '214-A-WI-WESTBRIDGE' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer '214-A-RAIL-BRIDGE' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer '0-EL-0' to standard layer 'Expo_View2'.
+[2026-03-12 22:11:25] Map the layer '0-EL-00' to standard layer 'Expo_View2'.
+[2026-03-12 22:11:25] Map the layer '0-EL-00A' to standard layer 'Expo_View2'.
+[2026-03-12 22:11:25] Map the layer '0-EL-1' to standard layer 'Expo_View2'.
+[2026-03-12 22:11:25] Map the layer '214-A-DR' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer '214-A-TX-16TH' to standard layer 'Expo_Markings'.
+[2026-03-12 22:11:25] Map the layer '214-A-VT-NIC' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'KEY' to standard layer 'Expo_View2'.
+[2026-03-12 22:11:25] Map the layer 'AIRWALL' to standard layer 'Expo_View2'.
+[2026-03-12 22:11:25] Map the layer 'Expo_AisleNumber' to standard layer 'Expo_View2'.
+[2026-03-12 22:11:25] Map the layer '_VPR-FM' to standard layer 'Expo_ImageMarkings'.
+[2026-03-12 22:11:25] Map the layer 'SHOW-TITLE' to standard layer 'Expo_Markings'.
+[2026-03-12 22:11:25] Map the layer 'Title' to standard layer 'Expo_Markings'.
+[2026-03-12 22:11:25] Map the layer 'Door' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer '214-A-BH-EX' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer '214-A-VT' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer '214-A-WL-EXT' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer '214-A-WL-INT' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'DEFPOINTS' to standard layer 'Expo_Markings'.
+[2026-03-12 22:11:25] Map the layer '04-Temporary Stairts' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'bldg_low ceiling' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'show_column detail' to standard layer 'Expo_Building'.
+[2026-03-12 22:11:25] Map the layer 'Expo_BoothOutline' to standard layer 'Expo_BoothOutline'.
+[2026-03-12 22:11:25] Map the layer 'Expo_BoothNumber' to standard layer 'Expo_BoothNumber'.
+[2026-03-12 23:32:30] If I ask to delete any layer and if it is locked, first unlock it and then delete it.
+[2026-03-18 02:10:37] Map the layer 'show_viewport' to standard layer 'Expo_View2'.
+[2026-03-18 02:10:37] Map the layer 'show_official' to standard layer 'Expo_BoothOutline'.
+[2026-03-18 02:10:37] Map the layer 'Expo_AisleDimension' to standard layer 'Expo_Markings'.
+[2026-03-18 02:10:37] Map the layer 'zFWCC A-F$0$Bldg_airwall_Annex' to standard layer 'Expo_Building'.
+[2026-03-18 02:10:37] Map the layer 'zFWCC A-F$0$Bldg_utility ports' to standard layer 'Expo_View2'.
+[2026-03-18 02:10:37] Map the layer 'zFWCC A-F$0$Bldg_fire' to standard layer 'Expo_View2'.
+[2026-03-18 02:10:37] Map the layer 'zFWCC A-F$0$Bldg_walls' to standard layer 'Expo_Building'.
+[2026-03-18 02:10:37] Map the layer 'zFWCC A-F$0$Bldg_text' to standard layer 'Expo_Markings'.
+[2026-03-18 02:10:37] Map the layer 'zFWCC A-F$0$Bldg_ceiling' to standard layer 'Expo_Building'.
+[2026-03-18 02:10:37] Map the layer 'zFWCC A-F$0$bldg_airwall_A-F' to standard layer 'Expo_Building'.
+[2026-03-18 02:10:37] Map the layer 'zFWCC A-F$0$bldg_fire-exits' to standard layer 'Expo_View2'.
+[2026-03-18 02:10:37] Map the layer 'zFWCC A-F$0$bldg_notes' to standard layer 'Expo_Markings'.
+[2026-03-18 02:10:37] Map the layer 'zFWCC A-F$0$bldg_airwallstrg' to standard layer 'Expo_View2'.
+[2026-03-18 02:10:37] Map the layer 'zFWCC A-F$0$bldg_airwall_mr' to standard layer 'Expo_Building'.
+[2026-03-18 02:10:37] Map the layer 'zFWCC A-F$0$Bldg_hallname_Annex' to standard layer 'Expo_Markings'.
+[2026-03-18 02:10:38] Map the layer 'zFWCC A-F$0$bldg_mr_names' to standard layer 'Expo_Markings'.
+[2026-03-18 02:10:38] Map the layer 'zFWCC A-F$0$Bldg_hallname_A-F' to standard layer 'Expo_Markings'.
+[2026-03-18 02:10:38] Map the layer 'zFWCC A-F$0$bldg_zones' to standard layer 'Expo_Markings'.
+[2026-03-18 02:10:38] Map the layer 'zFWCC A-F$0$bldg_branding' to standard layer 'Expo_Markings'.
+[2026-03-18 02:10:38] Map the layer 'zFWCC A-F$0$bldg_awdg' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$Bldg_Text' to standard layer 'Expo_Markings'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$LVCC Bldg_Door' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$Bldg_Fire' to standard layer 'Expo_View2'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$Bldg_Glass' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$LVCC North Central Bldg_Utility' to standard layer 'Expo_View2'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$LVCC North Central bldg_windows' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$bldg_escalator' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$bldg_elevator' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$bldg_railing' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$bldg_loading dock' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$bldg_bollard' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$bldg_restroom' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$bldg_trash container' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$bldg_posts' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$bldg_tunnel below' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$bldg_column-k brace' to standard layer 'Expo_Column'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$bldg_freight door' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$bldg_operations areas' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$bldg_breakline' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$bldg_lobby-vending machine' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$LVCC North Central bldg_site_monorail-column' to standard layer 'Expo_Column'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$LVCC North Central bldg_site_parking-traffic lines' to standard layer 'Expo_View2'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$bldg_site-fire hydrant' to standard layer 'Expo_View2'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$bldg_site_bollard' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$bldg_site_fire hydrant' to standard layer 'Expo_View2'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$bldg_site_utility_abv grnd-elec' to standard layer 'Expo_View2'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$bldg_international-symbol' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$Bldg_lobby-charging station' to standard layer 'Expo_View2'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$bldg_site_fire lane' to standard layer 'Expo_View2'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$bldg_site-walls' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$bldg_lobby-lightbox' to standard layer 'Expo_View2'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$A-DETL' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$A-WALL' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$A-WALL-PATT' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$I-WALL' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$A-COLS' to standard layer 'Expo_Column'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$A-DOOR' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$HANDRAILS' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$A-EQPM' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$DOORS' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$E-LITE-EQPM' to standard layer 'Expo_View2'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$A-COLS-9' to standard layer 'Expo_Column'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$V-WALL-1' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$Bldg_Stairs' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$Bldg_Airwall' to standard layer 'Expo_View2'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$Bldg_Column' to standard layer 'Expo_Column'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$Bldg_Door' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$Bldg_Intl Symbol' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$Bldg_Door Freight' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$Bldg_Utility Plumbing' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$Bldg_Wall' to standard layer 'Expo_Building'.
+[2026-03-27 04:12:33] Map the layer 'LVCC North-Central$0$Bldg_Feature Permanent' to standard layer 'Expo_Building'.
+[2026-03-27 07:09:04] Map the layer 'BLDG_UTILITY-PORTS' to standard layer 'Expo_View2'.
+[2026-03-27 07:09:04] Map the layer 'BLDG_FIRE' to standard layer 'Expo_View2'.
+[2026-03-27 07:09:04] Map the layer 'BLDG_EXITS' to standard layer 'Expo_View2'.
+[2026-03-27 07:09:04] Map the layer 'BLDG_TEXT' to standard layer 'Expo_Markings'.
+[2026-03-27 07:09:04] Map the layer 'BLDG_INTERNATIONAL-SYMBOLS' to standard layer 'Expo_Building'.
+[2026-03-27 07:09:04] Map the layer 'BLDG_WALLS' to standard layer 'Expo_Building'.
+[2026-03-27 07:09:04] Map the layer 'BLDG_DOORS' to standard layer 'Expo_Building'.
+[2026-03-27 07:09:04] Map the layer 'BLDG_ROLL-UP-DOORS' to standard layer 'Expo_Building'.
+[2026-03-27 07:09:04] Map the layer 'BLDG_TEXT2' to standard layer 'Expo_Markings'.
+[2026-03-27 07:09:04] Map the layer 'BLDG_STAIRS' to standard layer 'Expo_Building'.
+[2026-03-27 07:09:04] Map the layer 'BLDG_COLUMN-FILLS' to standard layer 'Expo_Column'.
+[2026-03-27 07:09:04] Map the layer 'BLDG_LEGEND-LOADING DOCK DOOR' to standard layer 'Expo_Building'.
+[2026-03-27 07:09:04] Map the layer 'BLDG_DIR-TEXT' to standard layer 'Expo_Markings'.
+[2026-03-27 07:09:04] Map the layer 'BLDG_WAY-FINDING-MONITORS' to standard layer 'Expo_View2'.
+[2026-03-27 07:09:04] Map the layer 'BLDG_D-HALL-FLOOR-WATER&DRAINS' to standard layer 'Expo_View2'.
+[2026-03-27 07:09:04] Map the layer 'BLDG_UTILITY MEETING ROOMS' to standard layer 'Expo_Building'.
+[2026-03-27 07:09:04] Map the layer 'NEW-FURNITURE' to standard layer 'Expo_ImageMarking'.
+[2026-03-27 07:09:04] Map the layer 'PERMANET-FURN-AREAS' to standard layer 'Expo_Building'.
+[2026-03-27 07:09:04] Map the layer 'A-COL-STEEL' to standard layer 'Expo_Column'.
+[2026-03-27 07:09:04] Map the layer 'A-ELEVATOR' to standard layer 'Expo_Building'.
+[2026-03-27 07:09:04] Map the layer 'A-RAIL' to standard layer 'Expo_Building'.
+[2026-03-27 07:09:04] Map the layer 'A-WALL' to standard layer 'Expo_Building'.
+[2026-03-27 07:09:04] Map the layer 'A-SF-GLASS' to standard layer 'Expo_Building'.
+[2026-03-27 07:09:04] Map the layer 'A-PART-TOILET' to standard layer 'Expo_Building'.
+[2026-03-27 07:09:04] Map the layer 'A-PLUMBING FIXTURE' to standard layer 'Expo_Building'.
+[2026-03-27 07:09:04] Map the layer 'EXPANSION_JOINTS' to standard layer 'Expo_Building'.
+[2026-03-27 07:09:04] Map the layer 'LIGHTING' to standard layer 'Expo_View2'.
+[2026-03-27 07:09:04] Map the layer 'A-COLS' to standard layer 'Expo_Column'.
