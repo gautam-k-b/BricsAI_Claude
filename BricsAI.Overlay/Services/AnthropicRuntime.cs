@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -91,6 +92,86 @@ namespace BricsAI.Overlay.Services
                     {
                         Role = Role.User,
                         Content = finalUserPrompt
+                    }
+                ]
+            };
+
+            var message = await client.Messages.Create(parameters);
+            var textBlocks = new System.Collections.Generic.List<string>();
+            foreach (var block in message.Content)
+            {
+                if (block.TryPickText(out var textBlock))
+                    textBlocks.Add(textBlock.Text);
+            }
+            var content = string.Join("\n", textBlocks).Trim();
+
+            var inputTokens = (int)message.Usage.InputTokens;
+            var outputTokens = (int)message.Usage.OutputTokens;
+            var totalTokens = inputTokens + outputTokens;
+
+            return (content, totalTokens, inputTokens, outputTokens);
+        }
+
+        // Returns null for unsupported formats (e.g. BMP) so callers can skip those images.
+        internal static MediaType? GetImageMediaType(string filePath)
+        {
+            return Path.GetExtension(filePath).ToLowerInvariant() switch
+            {
+                ".png"          => MediaType.ImagePng,
+                ".jpg" or ".jpeg" => MediaType.ImageJpeg,
+                ".gif"          => MediaType.ImageGif,
+                ".webp"         => MediaType.ImageWebP,
+                _               => null
+            };
+        }
+
+        internal static async Task<(string Content, int TotalTokens, int InputTokens, int OutputTokens)> SendMessageWithImagesAsync(
+            ProviderConfiguration configuration,
+            string systemPrompt,
+            string userPrompt,
+            IReadOnlyList<string> imagePaths)
+        {
+            var client = string.IsNullOrWhiteSpace(configuration.ApiUrl)
+                ? new AnthropicClient { ApiKey = configuration.ApiKey }
+                : new AnthropicClient { ApiKey = configuration.ApiKey, BaseUrl = configuration.ApiUrl };
+
+            var contentBlocks = new List<ContentBlockParam>();
+
+            foreach (var path in imagePaths)
+            {
+                if (!File.Exists(path)) continue;
+                var mediaType = GetImageMediaType(path);
+                if (mediaType == null) continue;
+                var bytes = await File.ReadAllBytesAsync(path);
+                var base64 = Convert.ToBase64String(bytes);
+                contentBlocks.Add(new ContentBlockParam(new ImageBlockParam
+                {
+                    Source = new ImageBlockParamSource(new Base64ImageSource
+                    {
+                        MediaType = mediaType.Value,
+                        Data = base64
+                    })
+                }));
+            }
+
+            var canApplySystemPrompt = CanApplySystemPrompt(systemPrompt);
+            var finalUserPrompt = canApplySystemPrompt
+                ? userPrompt
+                : $"SYSTEM INSTRUCTIONS:\n{systemPrompt}\n\nUSER REQUEST:\n{userPrompt}";
+
+            contentBlocks.Add(new ContentBlockParam(new TextBlockParam { Text = finalUserPrompt }));
+
+            var parameters = new MessageCreateParams
+            {
+                MaxTokens = 8192,
+                Model = string.IsNullOrWhiteSpace(configuration.Model) ? DefaultModel : configuration.Model,
+                System = canApplySystemPrompt ? systemPrompt : null,
+                Messages =
+                [
+                    new()
+                    {
+                        Role = Role.User,
+                        Content = contentBlocks
                     }
                 ]
             };

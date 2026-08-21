@@ -10,7 +10,9 @@ namespace BricsAI.Overlay.Services.Agents
     public class TableReviewResponse
     {
         public string Intent { get; set; } = "QUESTION";
-        public List<int> Indexes { get; set; } = new List<int>();
+        public List<int> Indexes { get; set; } = new List<int>();         // kept for compat
+        public List<int> IncludedIndexes { get; set; } = new List<int>();
+        public List<int> ExcludedIndexes { get; set; } = new List<int>();
         public string RuleText { get; set; } = "";
     }
 
@@ -54,21 +56,23 @@ The system has shown the user a numbered table of proposed CAD layer mappings an
 Your job is to read the user's free-form reply and classify it into exactly ONE of these intents:
 
 [KEYWORDS]
-INCLUDE: the user wants specific numbered rows accepted (saved). Examples: 'include 1,3,5', 'accept 2 and 4', 'yes to 1', 'keep 3'.
-EXCLUDE: the user wants specific numbered rows rejected (not saved). Examples: 'exclude 2,4', 'skip 1', 'reject 3', 'no to 5'.
+INCLUDE: the user wants specific numbered rows accepted and all others rejected. Examples: 'include 1,3,5', 'accept 2 and 4', 'yes to 1', 'keep 3'. Put the mentioned row numbers in includedIndexes.
+EXCLUDE: the user wants specific numbered rows rejected and all others accepted. Examples: 'exclude 2,4', 'skip 1', 'reject 3', 'no to 5'. Put the mentioned row numbers in excludedIndexes.
+INCLUDE_EXCLUDE: the user explicitly names BOTH rows to include AND rows to exclude. Examples: 'include 1,3 and exclude 2,4', 'keep 1 skip 2'. Put included row numbers in includedIndexes and excluded row numbers in excludedIndexes.
 MEMORIZE: the user is stating a standalone rule or mapping to remember for the future, independent of the numbered rows shown — NOT a response about the current table rows. Examples: 'remember that VendorLayerX always maps to Expo_Building', 'always skip layers starting with TEMP_', 'add a mapping: Layer99 to Expo_Column'. Put the plain-English rule (as a full sentence starting with 'Map the layer ...' for a layer mapping, or the free-form rule text otherwise) in ruleText.
 CONFIRM_ALL: the user wants every remaining PENDING row accepted and the review finished. Examples: 'looks good', 'confirm all', 'accept the rest', 'that's fine, proceed', 'done'.
 ACTION: the user is asking for a BricsCAD layer-visibility action (show/hide/isolate layers), not a decision about rows. Examples: 'show only the ones mapped to Expo_Building', 'hide everything else', 'isolate row 3's layer'.
 QUESTION: the user is asking a pure informational question about the table, not deciding anything. Examples: 'what does row 2 map to?', 'how many are low confidence?', 'why is row 4 mapped that way?'.
+HIGH_CONFIDENCE_ONLY: the user wants to accept only the High-confidence rows and skip (exclude) all Low-confidence rows. Examples: 'process high confidence only', 'proceed with high confidence mappings', 'accept high confidence', 'include only high confidence'.
 ABORT: the user wants to cancel the whole review. Examples: 'stop', 'cancel', 'abort', 'nevermind'.
 
 RULES:
-- For INCLUDE/EXCLUDE, put the 1-based row numbers mentioned in indexes. Numbers can be referenced by digit or spelled out; comma/space separated.
-- A single reply may only carry ONE intent — if the user both decides some rows AND states a memorize rule in the same message, prefer MEMORIZE only when the rule is clearly a standalone/general rule unrelated to a specific row number; otherwise prefer INCLUDE/EXCLUDE.
+- For INCLUDE: put the specified row numbers in includedIndexes only. For EXCLUDE: put the specified row numbers in excludedIndexes only. For INCLUDE_EXCLUDE: put specified includes in includedIndexes and specified excludes in excludedIndexes.
+- A single reply may only carry ONE intent — if the user both decides some rows AND states a memorize rule in the same message, prefer MEMORIZE only when the rule is clearly a standalone/general rule unrelated to a specific row number; otherwise prefer INCLUDE/EXCLUDE/INCLUDE_EXCLUDE.
 - Do not re-decide rows that are already INCLUDED or EXCLUDED unless the user explicitly changes their mind about that row.
 
 OUTPUT FORMAT: strict JSON only, no markdown, no explanation:
-{{ ""intent"": ""INCLUDE|EXCLUDE|MEMORIZE|CONFIRM_ALL|ACTION|QUESTION|ABORT"", ""indexes"": [1,3], ""ruleText"": """" }}";
+{{ ""intent"": ""INCLUDE|EXCLUDE|INCLUDE_EXCLUDE|MEMORIZE|CONFIRM_ALL|HIGH_CONFIDENCE_ONLY|ACTION|QUESTION|ABORT"", ""includedIndexes"": [], ""excludedIndexes"": [], ""ruleText"": """" }}";
 
             string prompt = $"USER REPLY: {userMessage}";
 
@@ -82,6 +86,11 @@ OUTPUT FORMAT: strict JSON only, no markdown, no explanation:
                 var root = doc.RootElement;
                 if (root.TryGetProperty("intent", out var intentEl))
                     response.Intent = (intentEl.GetString() ?? "QUESTION").Trim().ToUpper();
+                if (root.TryGetProperty("includedIndexes", out var incEl) && incEl.ValueKind == JsonValueKind.Array)
+                    response.IncludedIndexes = incEl.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.Number).Select(e => e.GetInt32()).ToList();
+                if (root.TryGetProperty("excludedIndexes", out var excEl) && excEl.ValueKind == JsonValueKind.Array)
+                    response.ExcludedIndexes = excEl.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.Number).Select(e => e.GetInt32()).ToList();
+                // backward compat — old "indexes" field
                 if (root.TryGetProperty("indexes", out var idxEl) && idxEl.ValueKind == JsonValueKind.Array)
                     response.Indexes = idxEl.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.Number).Select(e => e.GetInt32()).ToList();
                 if (root.TryGetProperty("ruleText", out var ruleEl))

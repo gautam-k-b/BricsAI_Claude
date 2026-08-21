@@ -75,7 +75,41 @@ Persistent mapping/rule memory is a **local SQLite database, shared between both
 - `KnowledgeService.GetLayerMappingsDictionary()` — indexed dictionary read
 - `KnowledgeService.CompactFile()` — now runs `VACUUM` (kept the old name since it's the one existing caller, `BricsAI.McpServer/Program.cs`); no longer a dedupe pass since upserts already prevent duplicate rows
 
-## 6) MCP Tool / Overlay Command Parity
+## 6) Overlay Mapper — Phase 1 Batching
+
+`MapperAgent.ClassifyByNameAsync` previously sent all unknown layers in a single LLM call. For drawings with 100+ vendor layers this caused token-limit failures that returned 0 classifications silently (the `catch {}` block swallowed the JSON parse error). The method now batches at **40 layers per call** via a private `ClassifySingleBatchAsync` and aggregates results across all batches.
+
+The three-phase pipeline is unchanged in structure:
+
+- **Phase 1** — name classification (LLM, batched). Confident results go directly to the mapping table. UNCERTAIN results go to Phase 2.
+- **Phase 2** — geometry polling via `NET:POLL_LAYER_SEMANTICS`, then batch geometry classification (1 LLM call). Low-confidence results go to Phase 3.
+- **Phase 3** — snapshot export via `NET:EXPORT_LAYER_SNAPSHOT`, then visual verification (1 LLM vision call per low-confidence batch). BMP fallbacks are skipped (Claude Vision requires PNG/JPEG/GIF/WebP).
+
+When Phase 1+2+3 return zero mappings (e.g. all layers were genuinely ambiguous), the tabular review is still shown — all unknown layers are proposed as `Deleted_` with Low confidence so the user can override specific rows before proofing runs.
+
+When all layers are already in the DB (`unknownLayers` is empty), the tabular review is built from the DB mappings for that drawing so the user can confirm or adjust before any destructive proofing step runs. Proofing **never starts automatically** regardless of DB state.
+
+## 6a) Overlay Mapping Review — Interaction Model
+
+`MappingReviewAgent` classifies user replies into the following intents:
+
+| Intent | Behaviour |
+|---|---|
+| `INCLUDE` | Includes specified rows; **auto-excludes all remaining pending rows**. Table reshown; wait for confirm. |
+| `EXCLUDE` | Excludes specified rows; **auto-includes all remaining pending rows**. Table reshown; wait for confirm. |
+| `INCLUDE_EXCLUDE` | Both lists applied; unspecified rows auto-excluded. Table reshown; wait for confirm. |
+| `HIGH_CONFIDENCE_ONLY` | All High rows included, all Low rows excluded in one step. Table reshown; wait for confirm. |
+| `CONFIRM_ALL` | Includes all remaining pending rows and **immediately fires** `CompleteMappingReview()`. |
+| `MEMORIZE` | Rule saved to SQLite; review stays open. |
+| `QUESTION` | Answered by `AnswerMappingQuestionAsync`; review stays open. |
+| `ACTION` | Layer visibility action built by `BuildLayerActionPlanAsync` and executed via COM; review stays open. |
+| `ABORT` | `AbortMappingReview()` — all proposals discarded, proofing does not start. |
+
+**Key invariant**: only `CONFIRM_ALL` (when `allDecided`) triggers `CompleteMappingReview()`. INCLUDE/EXCLUDE/INCLUDE_EXCLUDE/HIGH_CONFIDENCE_ONLY auto-decide rows and reshow the table, always requiring one explicit confirm step before proofing.
+
+**IsBusy race fix**: `CompleteMappingReview()` fires `ExecuteQuickAction` as fire-and-forget. The original `SendMessageAsync` invocation (the table-review turn) returns immediately after `CompleteMappingReview()` without setting `IsBusy = false`, so the newly started proofing run's `IsBusy = true` is never overwritten.
+
+## 7) MCP Tool / Overlay Command Parity
 
 - get_layer_geometry(layer, offset, maxEntities) / `NET:GET_LAYER_GEOMETRY`
 - export_layer_snapshot(layer, format) / `NET:EXPORT_LAYER_SNAPSHOT`
@@ -86,7 +120,21 @@ Design intent:
 - geometry paging protects context/window size on large layers
 - snapshot export supports human visual verification
 
-## 7) Logging and Observability
+## 7a) Geometry Explosion — Stall Detection and POINT Handling
+
+**QSelectExplode (ExplodeToolV15/V19):**
+- Counts entities **before** each explode pass. After the explode+sleep, reselects and counts again. If `countAfter >= countBefore`, the type cannot be exploded — returns immediately with a descriptive skip message instead of exhausting all retry passes.
+- `totalExploded` now accumulates the actual reduction (`countBefore - countAfter`) per pass, not the pre-explode count.
+
+**PrepareGeometry (GeometryToolsPlugin V15/V19):**
+- POINT entities are erased via LISP **before** the main explosion loop (`ssget "X" '((0 . "POINT"))`). POINTs cannot be exploded and carry no useful geometry — attempting to explode them burns passes for no effect.
+- All other non-standard types (HATCH, unknown block types, etc.) are attempted for explosion — only types that fail the count-before/after check are skipped.
+- Stall detection triggers when the non-standard entity count is identical for 2 consecutive passes. Remaining entities are erased and the return string includes `"WARNING: N entities could not be exploded..."`.
+- Return strings: `"Geometry Prepared Natively: Executed N global wipe cycles. All complex entities were successfully exploded."` on a clean run; `"...WARNING: N entities could not be exploded after N passes and were erased (likely locked, xref-attached, or dynamic blocks). Review the drawing for missing geometry."` when erasure occurred.
+
+**ValidatorAgent:** treats any `WARNING:` in geometry logs as a partial failure and includes the warning text in its FAIL response so the Executor can report it to the user.
+
+## 8) Logging and Observability
 
 transaction_log.txt now includes:
 
@@ -100,7 +148,7 @@ Interpretation rule:
 
 - treat token fields as directional usage signals, not billing truth
 
-## 8) Common Failure Mode: Build Locks
+## 9) Common Failure Mode: Build Locks
 
 Cause:
 
@@ -113,7 +161,7 @@ Get-Process BricsAI.McpServer,BricsAI.Overlay -ErrorAction SilentlyContinue | St
 dotnet build BricsAI.sln -c Release
 ```
 
-## 9) Safe Contribution Workflow
+## 10) Safe Contribution Workflow
 
 1. Build before and after change.
 2. Validate tool behavior with a live drawing, or with `BRICSAI_MOCK_CAD=1` for a fast, deterministic dev loop.
@@ -122,7 +170,7 @@ dotnet build BricsAI.sln -c Release
 5. Update docs when tools or flow change.
 6. Commit with clear scope and operational notes.
 
-## 10) Suggested First Validation Script
+## 11) Suggested First Validation Script
 
 Against a real BricsCAD instance, or headlessly with `BRICSAI_MOCK_CAD=1`:
 
@@ -134,4 +182,10 @@ Against a real BricsCAD instance, or headlessly with `BRICSAI_MOCK_CAD=1`:
 6. run_full_proofing (McpServer) / send "proof this drawing" to Overlay, which emits the equivalent `NET:RUN_FULL_PROOFING`
 7. export_layer_snapshot for QA artifacts
 
-For Overlay specifically, also exercise the tabular mapping review: trigger a proofing run against a drawing with unmapped layers, then reply with `include 1,3`, `exclude 2`, a mid-review `remember X always maps to Y`, and finally `confirm all`.
+For Overlay specifically, also exercise the full mapping review flow:
+- Trigger a proofing run against a drawing with unmapped layers.
+- Observe Phase 1 batching: layers are classified 40 at a time; progress shown per batch.
+- Reply `include 1,3,5` — confirm all others are auto-excluded and the table reshows with final statuses.
+- Reply `confirm` — proofing should start immediately (buttons lock, no further prompts).
+- Also test mid-review: `remember X always maps to Expo_Building` → (confirm review stays open) → `confirm all`.
+- Also test abort: `stop` → review discarded, proofing does not start.

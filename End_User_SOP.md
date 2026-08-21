@@ -2,7 +2,20 @@
 
 Purpose: run reliable CAD proofing with Claude + BricsAI MCP using a safe, repeatable process.
 
-This SOP covers the **Claude Code / Claude Desktop + BricsAI MCP** flow. If you're using the **BricsAI.Overlay** desktop app instead, the daily workflow is the same (open BricsCAD, open the drawing, ask it to proof) but the mapping-review step looks different: Overlay shows one numbered table of all proposed mappings (with a confidence and reason column) instead of a conversational back-and-forth, and you reply with things like `include 1,3,5`, `exclude 2,4`, or `confirm all` — you can also say `remember <layer> always maps to <target>` at any point during review without interrupting it.
+This SOP covers the **Claude Code / Claude Desktop + BricsAI MCP** flow. If you're using the **BricsAI.Overlay** desktop app instead, the daily workflow is the same (open BricsCAD, open the drawing, ask it to proof) but the mapping-review step looks different: Overlay shows one numbered table of all proposed mappings (with Confidence and Reason columns) instead of a conversational back-and-forth.
+
+**Overlay mapping-review interaction model:**
+
+- `include 1,3,5` — includes those rows and **auto-excludes all others**. The table is reshown with final statuses; reply **confirm** (or "yes" / "looks good") to start proofing.
+- `exclude 2,4` — excludes those rows and **auto-includes all others**. Same confirm step follows.
+- `include 1,3 and exclude 2,4` — applies both lists; anything not named is auto-excluded.
+- `process high confidence only` — includes all High-confidence rows, excludes all Low-confidence rows in one step.
+- `confirm all` — accepts every remaining pending row and starts proofing immediately.
+- `remember <layer> always maps to <target>` — saves a rule to the knowledge base mid-review without interrupting it.
+- `stop` / `cancel` / `abort` — cancels the review and discards all proposals; proofing does not start.
+- Any question (e.g. "why is row 4 mapped to Expo_Building?") — answered conversationally; review stays open.
+
+The review is always shown before proofing, even when all layers were previously learned — so you always have a chance to adjust before anything changes in the drawing. Low-confidence rows show a snapshot image on hover when one was captured during the geometry analysis phase.
 
 ## 1) Daily Startup
 

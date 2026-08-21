@@ -498,6 +498,11 @@ namespace BricsAI.Plugins.V15Tools
                 short[] wType = new short[] { -4, -4, 0, 0, 0, 0, 0, 0, 0, -4, -4 };
                 object[] wData = new object[] { "<NOT", "<OR", "ARC", "LINE", "CIRCLE", "ELLIPSE", "LWPOLYLINE", "TEXT", "SOLID", "OR>", "NOT>" };
 
+                // Delete POINT entities upfront — they cannot be exploded and serve no purpose in the final geometry.
+                SendCommandSafe(doc, "\x03\x03");
+                SendCommandSafe(doc, "(if (setq ss (ssget \"_X\" '((0 . \"POINT\")))) (command \"_.ERASE\" ss \"\"))\n");
+                System.Threading.Thread.Sleep(200);
+
                 // FIX: Create ONE reusable SelectionSet outside the loop
                 string reusableName = "BA_GlobalExp_Reuse";
                 dynamic? ssetReuse = null;
@@ -508,6 +513,7 @@ namespace BricsAI.Plugins.V15Tools
                 int passCount = 0;
                 int previousNonStandardCount = -1;
                 int identicalCountLoops = 0;
+                int finalNonStandardCount = 0;
                 var geometryStopwatch = System.Diagnostics.Stopwatch.StartNew();
 
                 LoggerService.LogTransaction("PLUGIN", "PrepareGeometry: geometry explode loop started.");
@@ -527,12 +533,14 @@ namespace BricsAI.Plugins.V15Tools
 
                         if (currentNonStandardCount > 0)
                         {
+                            finalNonStandardCount = currentNonStandardCount;
+
                             if (currentNonStandardCount == previousNonStandardCount)
                             {
                                 identicalCountLoops++;
                                 if (identicalCountLoops >= 2)
                                 {
-                                    LoggerService.LogTransaction("PLUGIN", $"PrepareGeometry: pass {passCount} breaking due to identical non-standard count >= 2.");
+                                    LoggerService.LogTransaction("PLUGIN", $"PrepareGeometry: pass {passCount} breaking due to identical non-standard count >= 2 ({currentNonStandardCount} entities unexplodable).");
                                     break; // Unexplodable remainder
                                 }
                             }
@@ -596,7 +604,10 @@ namespace BricsAI.Plugins.V15Tools
                 LoggerService.LogTransaction("PLUGIN", "PrepareGeometry: issuing final QAFLAGS reset.");
                 SendCommandSafe(doc, "(setvar \"QAFLAGS\" 0)\n");
 
-                return $"Geometry Prepared Natively: Executed {passCount} global wipe cycles to explode complex entities recursively, and finalized by erasing unresolvable objects.";
+                string unexplodableNote = finalNonStandardCount > 0
+                    ? $" WARNING: {finalNonStandardCount} entities could not be exploded after {passCount} passes and were erased (likely locked, xref-attached, or dynamic blocks). Review the drawing for missing geometry."
+                    : " All complex entities were successfully exploded.";
+                return $"Geometry Prepared Natively: Executed {passCount} global wipe cycles.{unexplodableNote}";
             }
             catch (Exception ex)
             {

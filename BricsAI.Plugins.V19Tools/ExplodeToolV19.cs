@@ -91,9 +91,9 @@ namespace BricsAI.Plugins.V19Tools
                 int totalExploded = 0;
                 int passCount = 0;
                 int maxPasses = 10; // Failsafe to prevent infinite COM loop
-                
+
                 string ssetName = "BA_QSel_" + System.Guid.NewGuid().ToString("N").Substring(0, 10);
-                
+
                 while (passCount < maxPasses)
                 {
                     passCount++;
@@ -101,20 +101,28 @@ namespace BricsAI.Plugins.V19Tools
                     try
                     {
                         sset.Select(5, Type.Missing, Type.Missing, new short[] { 0 }, new object[] { filterType });
-                        if (sset.Count > 0)
+                        int countBefore = sset.Count;
+
+                        if (countBefore == 0) break; // No more entities of this type
+
+                        doc.SendCommand("(setvar \"QAFLAGS\" 1)\n");
+                        doc.SendCommand($"(if (setq ss (ssget \"_X\" '((0 . \"{filterType}\")))) (sssetfirst nil ss))\n");
+                        doc.SendCommand("_.EXPLODE\n");
+                        doc.SendCommand("(setvar \"QAFLAGS\" 0)\n");
+                        System.Threading.Thread.Sleep(500);
+
+                        // Count-after check: if the count didn't change the type is unexplodable — skip it.
+                        sset.Clear();
+                        sset.Select(5, Type.Missing, Type.Missing, new short[] { 0 }, new object[] { filterType });
+                        int countAfter = sset.Count;
+
+                        int reduced = countBefore - countAfter;
+                        if (reduced <= 0)
                         {
-                            totalExploded += sset.Count;
-                            doc.SendCommand("(setvar \"QAFLAGS\" 1)\n");
-                            doc.SendCommand($"(if (setq ss (ssget \"_X\" '((0 . \"{filterType}\")))) (sssetfirst nil ss))\n");
-                            doc.SendCommand("_.EXPLODE\n");
-                            doc.SendCommand("(setvar \"QAFLAGS\" 0)\n");
-                            System.Threading.Thread.Sleep(500); // 0.5s pause to allow BricsCAD to catch up and process the explosion physically before C# re-evaluates the collection
+                            return $"Quick Select: Found {countBefore} '{itemType}' entities but none could be exploded (count unchanged after attempt). Skipping — they may be locked, xref-attached, or dynamic blocks.";
                         }
-                        else
-                        {
-                            // No more items of this type found
-                            break;
-                        }
+
+                        totalExploded += reduced;
                     }
                     finally
                     {
@@ -124,7 +132,7 @@ namespace BricsAI.Plugins.V19Tools
 
                 if (totalExploded > 0)
                 {
-                    return $"Quick Select: Found and exploded a total of {totalExploded} '{itemType}' entities across {passCount} passes.";
+                    return $"Quick Select: Successfully reduced '{itemType}' by {totalExploded} entities across {passCount} passes.";
                 }
                 else
                 {

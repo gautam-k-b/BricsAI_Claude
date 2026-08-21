@@ -45,7 +45,11 @@ BricsAI.McpServer                     Surveyor -> Mapper -> MappingReview -> Exe
 - BricsAI.Overlay
   - WPF chat UI driving the same COM/plugin layer directly (no MCP hop)
   - Multi-agent pipeline: SurveyorAgent, MapperAgent, MappingReviewAgent, ExecutorAgent, ValidatorAgent
-  - Tabular, index-based mapping review (numbered proposals with confidence/reason, reply with e.g. "include 1,3,5" or "exclude 2,4", mid-review "remember ..." rules, questions, layer-visibility actions)
+  - Tabular mapping review always shown before proofing — even when all layers are already DB-known — so no proofing ever starts without human approval
+  - Phase 1 name classification batches at 40 layers per LLM call to avoid token-limit failures on large drawings
+  - INCLUDE auto-excludes all other rows; EXCLUDE auto-includes all other rows; INCLUDE_EXCLUDE for explicit combined decisions; HIGH_CONFIDENCE_ONLY for one-shot bulk decision by confidence level
+  - Mid-review commands (MEMORIZE, ABORT, QUESTION, ACTION) work at any time without interrupting the table state
+  - Buttons and input field lock during active processing; unlock automatically when the table review is waiting for input
 - BricsAI.Core
   - IToolPlugin contract
   - KnowledgeService — SQLite-backed persistent mappings and rules (see Knowledge Store Behavior below)
@@ -84,6 +88,13 @@ BricsAI.McpServer                     Surveyor -> Mapper -> MappingReview -> Exe
 - select_utilities
 - explode_entities_by_type
 - delete_non_standard_entities
+
+**Geometry preparation behaviour:**
+- POINT entities are deleted upfront before the explosion loop — they cannot be exploded and carry no useful geometry.
+- All other non-standard entity types (HATCH, unknown block types, etc.) are attempted for explosion each pass.
+- `explode_entities_by_type` counts entities before and after each attempt; if the count does not decrease, the type is skipped immediately instead of exhausting all retry passes.
+- After all passes, any entities that still could not be exploded are erased and a `WARNING:` note is included in the result. ValidatorAgent treats this as a partial failure and surfaces it to the user.
+- `prepare_geometry` returns `"All complex entities were successfully exploded."` on a clean run, or `"WARNING: N entities could not be exploded after N passes and were erased..."` when erasure occurred.
 
 ### Proofing tools
 

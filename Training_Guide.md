@@ -81,6 +81,27 @@ Use this when vendor layers are noisy or inconsistent:
 5. apply only high-confidence mappings
 6. keep low-confidence layers for manual review
 
+**If using BricsAI.Overlay instead of MCP**, the above happens automatically via the 3-phase pipeline:
+
+- Phase 1: all unknown layers classified by name in batches of 40 (confident → table; ambiguous → Phase 2)
+- Phase 2: geometry polled for ambiguous layers, then batch-classified (low-confidence → Phase 3)
+- Phase 3: snapshot exported and visually verified by Claude Vision
+
+The tabular review is always shown — even when the drawing's layers are fully known from previous sessions — so you always confirm before proofing touches the drawing.
+
+**Overlay mapping-review commands:**
+
+| Command | What it does |
+|---|---|
+| `include 1,3,5` | Includes those rows; auto-excludes all others |
+| `exclude 2,4` | Excludes those rows; auto-includes all others |
+| `include 1,3 and exclude 2,4` | Both lists applied; anything else auto-excluded |
+| `process high confidence only` | Bulk-includes High rows, bulk-excludes Low rows |
+| `confirm` / `yes` / `looks good` | Confirms the current decided state and starts proofing |
+| `confirm all` | Includes all remaining pending rows and starts proofing |
+| `remember X maps to Y` | Saves rule mid-review; review stays open |
+| `stop` / `cancel` | Cancels the review; proofing does not start |
+
 ## Understanding usage logs and token estimates
 
 Every MCP tool action now logs usage details in transaction_log.txt, including:

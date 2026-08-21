@@ -72,6 +72,7 @@ namespace BricsAI.Overlay.ViewModels
         private HashSet<int> _excludedIndexes = new HashSet<int>();
         private Dictionary<string, string> _mappingReasons = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private Dictionary<string, string> _mappingConfidence = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private Dictionary<string, string> _mappingSnapshotPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         public MainViewModel()
         {
@@ -124,32 +125,66 @@ namespace BricsAI.Overlay.ViewModels
                     {
                         case "INCLUDE":
                         {
-                            var applied = new List<int>();
-                            foreach (var idx in reviewResponse.Indexes)
+                            var included = new List<int>();
+                            foreach (var idx in reviewResponse.IncludedIndexes.Any() ? reviewResponse.IncludedIndexes : reviewResponse.Indexes)
                             {
                                 if (idx >= 1 && idx <= _mappingQueue.Count)
                                 {
                                     _includedIndexes.Add(idx);
                                     _excludedIndexes.Remove(idx);
-                                    applied.Add(idx);
+                                    included.Add(idx);
                                 }
                             }
-                            Messages.Add(new ChatMessage { Role = "Assistant", Content = applied.Count > 0 ? $"✅ Included row(s): {string.Join(", ", applied)}" : "I couldn't match any valid row numbers in that — please reference the row numbers from the table." });
+                            // Auto-exclude every remaining pending row — user said "these are the ones I want"
+                            for (int i = 1; i <= _mappingQueue.Count; i++)
+                                if (!_includedIndexes.Contains(i) && !_excludedIndexes.Contains(i))
+                                    _excludedIndexes.Add(i);
+                            Messages.Add(new ChatMessage { Role = "Assistant", Content = included.Count > 0
+                                ? $"✅ Row(s) {string.Join(", ", included)} included — all others excluded."
+                                : "I couldn't match any valid row numbers in that — please reference the row numbers from the table." });
                             break;
                         }
                         case "EXCLUDE":
                         {
-                            var applied = new List<int>();
-                            foreach (var idx in reviewResponse.Indexes)
+                            var excluded = new List<int>();
+                            foreach (var idx in reviewResponse.ExcludedIndexes.Any() ? reviewResponse.ExcludedIndexes : reviewResponse.Indexes)
                             {
                                 if (idx >= 1 && idx <= _mappingQueue.Count)
                                 {
                                     _excludedIndexes.Add(idx);
                                     _includedIndexes.Remove(idx);
-                                    applied.Add(idx);
+                                    excluded.Add(idx);
                                 }
                             }
-                            Messages.Add(new ChatMessage { Role = "Assistant", Content = applied.Count > 0 ? $"⏭️ Excluded row(s): {string.Join(", ", applied)}" : "I couldn't match any valid row numbers in that — please reference the row numbers from the table." });
+                            // Auto-include every remaining pending row — user said "these are the ones I don't want"
+                            for (int i = 1; i <= _mappingQueue.Count; i++)
+                                if (!_excludedIndexes.Contains(i) && !_includedIndexes.Contains(i))
+                                    _includedIndexes.Add(i);
+                            Messages.Add(new ChatMessage { Role = "Assistant", Content = excluded.Count > 0
+                                ? $"⏭️ Row(s) {string.Join(", ", excluded)} excluded — all others included."
+                                : "I couldn't match any valid row numbers in that — please reference the row numbers from the table." });
+                            break;
+                        }
+                        case "INCLUDE_EXCLUDE":
+                        {
+                            var included = new List<int>();
+                            var excluded = new List<int>();
+                            foreach (var idx in reviewResponse.IncludedIndexes)
+                            {
+                                if (idx >= 1 && idx <= _mappingQueue.Count)
+                                { _includedIndexes.Add(idx); _excludedIndexes.Remove(idx); included.Add(idx); }
+                            }
+                            foreach (var idx in reviewResponse.ExcludedIndexes)
+                            {
+                                if (idx >= 1 && idx <= _mappingQueue.Count)
+                                { _excludedIndexes.Add(idx); _includedIndexes.Remove(idx); excluded.Add(idx); }
+                            }
+                            // Auto-exclude anything not explicitly named
+                            for (int i = 1; i <= _mappingQueue.Count; i++)
+                                if (!_includedIndexes.Contains(i) && !_excludedIndexes.Contains(i))
+                                    _excludedIndexes.Add(i);
+                            Messages.Add(new ChatMessage { Role = "Assistant", Content =
+                                $"✅ Included: {(included.Any() ? string.Join(", ", included) : "none")} — Excluded: {(excluded.Any() ? string.Join(", ", excluded) : "none")} — All others excluded." });
                             break;
                         }
                         case "MEMORIZE":
@@ -165,6 +200,19 @@ namespace BricsAI.Overlay.ViewModels
                         {
                             for (int i = 1; i <= _mappingQueue.Count; i++)
                                 if (!_excludedIndexes.Contains(i)) _includedIndexes.Add(i);
+                            break;
+                        }
+                        case "HIGH_CONFIDENCE_ONLY":
+                        {
+                            int highCount = 0, lowCount = 0;
+                            for (int i = 0; i < _mappingQueue.Count; i++)
+                            {
+                                int idx = i + 1;
+                                string conf = _mappingConfidence.TryGetValue(_mappingQueue[i].Source, out var c) ? c : "Low";
+                                if (conf == "High") { _includedIndexes.Add(idx); _excludedIndexes.Remove(idx); highCount++; }
+                                else                { _excludedIndexes.Add(idx); _includedIndexes.Remove(idx); lowCount++;  }
+                            }
+                            Messages.Add(new ChatMessage { Role = "Assistant", Content = $"✅ High-confidence rows included ({highCount}). Low-confidence rows excluded ({lowCount})." });
                             break;
                         }
                         case "ACTION":
@@ -210,13 +258,28 @@ namespace BricsAI.Overlay.ViewModels
                     }
 
                     bool allDecided = _includedIndexes.Count + _excludedIndexes.Count >= _mappingQueue.Count;
-                    if (allDecided)
+                    if (allDecided && reviewResponse.Intent == "CONFIRM_ALL")
                     {
+                        // Explicit confirmation with all rows decided — proceed to proofing
                         CompleteMappingReview();
+                        return;
                     }
-                    else if (reviewResponse.Intent == "INCLUDE" || reviewResponse.Intent == "EXCLUDE")
+                    else if (allDecided)
                     {
-                        Messages.Add(new ChatMessage { Role = "Assistant", Content = FormatMappingTable(), IsTableContent = true });
+                        // All rows were auto-decided by INCLUDE/EXCLUDE/HIGH_CONFIDENCE_ONLY.
+                        // Show the final table once and wait for explicit confirmation before proofing.
+                        Messages.Add(new ChatMessage
+                        {
+                            Role = "Assistant",
+                            Content = "All rows decided. Review below and reply **confirm** (or 'yes', 'looks good') to start proofing, or adjust any row.\n\n" + FormatMappingTable(),
+                            IsTableContent = true,
+                            MappingRows = BuildMappingRows()
+                        });
+                    }
+                    else if (reviewResponse.Intent == "INCLUDE" || reviewResponse.Intent == "EXCLUDE" ||
+                             reviewResponse.Intent == "INCLUDE_EXCLUDE" || reviewResponse.Intent == "HIGH_CONFIDENCE_ONLY")
+                    {
+                        Messages.Add(new ChatMessage { Role = "Assistant", Content = FormatMappingTable(), IsTableContent = true, MappingRows = BuildMappingRows() });
                     }
 
                     IsBusy = false;
@@ -252,7 +315,8 @@ namespace BricsAI.Overlay.ViewModels
                     {
                         Role = "Assistant",
                         Content = $"🔁 **Resuming mapping review from previous session**\n\n{FormatMappingTable()}",
-                        IsTableContent = true
+                        IsTableContent = true,
+                        MappingRows = BuildMappingRows()
                     });
                 }
                 else
@@ -469,6 +533,72 @@ namespace BricsAI.Overlay.ViewModels
                         totalOutputTokens += phase2.OutputTokens;
                         allMappings.AddRange(phase2.Mappings);
                         mapProgress.Report($"✅ {phase2.Mappings.Count} additional layers classified by geometry.");
+
+                        // === PHASE 3: Visual verification for low-confidence geometry results ===
+                        var lowConfidence = phase2.Mappings
+                            .Where(m => m.Confidence == "Low")
+                            .ToList();
+
+                        if (lowConfidence.Any())
+                        {
+                            mapProgress.Report($"\n📸 Phase 3: Exporting snapshots for {lowConfidence.Count} low-confidence layer(s)...");
+                            var visualInputs = new List<(string LayerName, string ProposedTarget, string SnapshotPath)>();
+
+                            foreach (var m in lowConfidence)
+                            {
+                                mapProgress.Report($"\n   Exporting snapshot for '{m.SourceLayer}'...");
+                                string safeLayerName = m.SourceLayer.Replace("\"", "\\\"").Replace("\\", "\\\\");
+                                string snapshotPlan = $@"{{ ""tool_calls"": [{{ ""command_name"": ""EXPORT_SNAPSHOT"", ""lisp_code"": ""NET:EXPORT_LAYER_SNAPSHOT:{safeLayerName}|PNG"" }}] }}";
+                                string snapshotResult = await Task.Run(() => _comClient.ExecuteActionAsync(snapshotPlan, mapProgress));
+
+                                if (snapshotResult.Contains("FilePath") && !snapshotResult.StartsWith("Error"))
+                                {
+                                    try
+                                    {
+                                        using var doc = System.Text.Json.JsonDocument.Parse(snapshotResult);
+                                        if (doc.RootElement.TryGetProperty("FilePath", out var fp) &&
+                                            doc.RootElement.TryGetProperty("FormatUsed", out var fmt))
+                                        {
+                                            string filePath = fp.GetString() ?? "";
+                                            string formatUsed = fmt.GetString() ?? "";
+                                            // Claude Vision only supports PNG/JPEG/GIF/WebP — skip BMP fallbacks
+                                            if (!string.Equals(formatUsed, "BMP", StringComparison.OrdinalIgnoreCase) &&
+                                                System.IO.File.Exists(filePath))
+                                            {
+                                                visualInputs.Add((m.SourceLayer, m.TargetLayer, filePath));
+                                                _mappingSnapshotPaths[m.SourceLayer] = filePath;
+                                            }
+                                            else
+                                            {
+                                                mapProgress.Report($"   ⚠️ Snapshot fell back to BMP for '{m.SourceLayer}' — skipping visual verification.");
+                                            }
+                                        }
+                                    }
+                                    catch { }
+                                }
+                                else
+                                {
+                                    mapProgress.Report($"   ⚠️ Could not export snapshot for '{m.SourceLayer}' — skipping.");
+                                }
+                            }
+
+                            if (visualInputs.Any())
+                            {
+                                mapProgress.Report($"\n👁️ Visually verifying {visualInputs.Count} layer(s) with image analysis...");
+                                var phase3 = await _mapper.VisuallyVerifyLowConfidenceAsync(visualInputs);
+                                totalTokens += phase3.Tokens;
+                                totalInputTokens += phase3.InputTokens;
+                                totalOutputTokens += phase3.OutputTokens;
+
+                                // Replace the low-confidence mappings with visually verified results
+                                var phase3BySource = phase3.Verified.ToDictionary(r => r.SourceLayer, StringComparer.OrdinalIgnoreCase);
+                                allMappings.RemoveAll(r => r.Confidence == "Low" && phase3BySource.ContainsKey(r.SourceLayer));
+                                allMappings.AddRange(phase3.Verified);
+
+                                int upgraded = phase3.Verified.Count(r => r.Confidence == "High");
+                                mapProgress.Report($"✅ Visual verification complete: {upgraded}/{phase3.Verified.Count} confirmed, confidence upgraded.");
+                            }
+                        }
                     }
                 }
 
@@ -509,7 +639,8 @@ namespace BricsAI.Overlay.ViewModels
                         {
                             Role = "Assistant",
                             Content = $"🛑 **Human Review Required** — {_mappingQueue.Count} unknown layer(s) need mapping\n\n{FormatMappingTable()}",
-                            IsTableContent = true
+                            IsTableContent = true,
+                            MappingRows = BuildMappingRows()
                         });
                     }
 
@@ -517,8 +648,108 @@ namespace BricsAI.Overlay.ViewModels
                     IsBusy = false; // Unlock UI to allow user feedback
                     return; // Halt execution and wait for human response
                 }
+                else
+                {
+                    // Phase 1/2/3 returned 0 mappings — build fallback "Deleted_" proposals so
+                    // the user still gets the tabular review and can manually assign targets.
+                    foreach (var layer in unknownLayers)
+                    {
+                        _mappingReasons[layer] = "Layer could not be classified automatically by name or geometry — defaulting to Deleted_";
+                        _mappingConfidence[layer] = "Low";
+                    }
 
-                // Dictionary file is removed in favor of native KnowledgeService rule memory.
+                    var fallbackToolCalls = unknownLayers
+                        .Select(layer =>
+                        {
+                            string s = layer.Replace("\\", "\\\\").Replace("\"", "\\\"");
+                            return $@"{{ ""command_name"": ""Semantic Mapping"", ""lisp_code"": ""NET:LEARN_LAYER_MAPPING:{s}:Deleted_"" }}";
+                        })
+                        .ToList();
+
+                    _pendingMappingCommands = "{ \"tool_calls\": [\n" + string.Join(",\n", fallbackToolCalls) + "\n] }";
+                    _lastKnownMappings = _pendingMappingCommands;
+                    _originalProofingCommand = userMessage;
+                    _isInTableMappingReview = true;
+                    _mappingQueue = ExtractMappingPairsFromJson(_pendingMappingCommands);
+                    _includedIndexes.Clear();
+                    _excludedIndexes.Clear();
+
+                    if (_mappingQueue.Count > 0)
+                    {
+                        stopwatch.Stop();
+                        double surveySeconds = Math.Round(stopwatch.Elapsed.TotalSeconds, 1);
+                        Messages.Add(new ChatMessage { Role = "Assistant", Content = $"📊 {unknownLayers.Count} layer(s) could not be automatically classified. Survey completed in {surveySeconds}s." });
+                        Messages.Add(new ChatMessage
+                        {
+                            Role = "Assistant",
+                            Content = $"🛑 **Human Review Required** — {_mappingQueue.Count} layer(s) unclassified (all defaulting to Deleted_)\n\n" +
+                                      $"The AI could not determine targets for these layers. Adjust any you want to remap, then confirm.\n\n{FormatMappingTable()}",
+                            IsTableContent = true,
+                            MappingRows = BuildMappingRows()
+                        });
+                    }
+
+                    OnPropertyChanged(nameof(IsQuickActionsEnabled));
+                    IsBusy = false;
+                    return;
+                }
+            }
+
+            // --- TABULAR REVIEW FOR DB-KNOWN LAYERS ---
+            // Mapper was skipped (all non-standard layers matched the DB). Show the same tabular
+            // review so the user can confirm or adjust before any destructive proofing runs.
+            bool isProofingCommand = cleanUserMessage.Contains("proof", StringComparison.OrdinalIgnoreCase) ||
+                                     cleanUserMessage.Contains("standardize", StringComparison.OrdinalIgnoreCase);
+            if (isProofingCommand && !skipMappingReview)
+            {
+                var dbLayerNames = cleanLayersPayload
+                    .Split(new[] { '\r', '\n', ',' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(l => l.Trim())
+                    .Where(l => !string.IsNullOrWhiteSpace(l) && !standardA2zLayers.Contains(l))
+                    .Distinct()
+                    .ToList();
+
+                _mappingReasons.Clear();
+                _mappingConfidence.Clear();
+
+                var dbToolCalls = new List<string>();
+                foreach (var layer in dbLayerNames)
+                {
+                    string target = knownMappings.TryGetValue(layer, out string t) ? t : "Deleted_";
+                    string reason = knownMappings.ContainsKey(layer)
+                        ? "Previously learned from knowledge base"
+                        : "No matching rule found — will be renamed to Deleted_";
+                    string confidence = knownMappings.ContainsKey(layer) ? "High" : "Low";
+                    string safeLisp   = layer.Replace("\\", "\\\\").Replace("\"", "\\\"");
+                    string safeTarget = target.Replace("\\", "\\\\").Replace("\"", "\\\"");
+                    _mappingReasons[layer]    = reason;
+                    _mappingConfidence[layer] = confidence;
+                    dbToolCalls.Add($@"{{ ""command_name"": ""Semantic Mapping"", ""lisp_code"": ""NET:LEARN_LAYER_MAPPING:{safeLisp}:{safeTarget}"" }}");
+                }
+
+                _pendingMappingCommands = "{ \"tool_calls\": [\n" + string.Join(",\n", dbToolCalls) + "\n] }";
+                _lastKnownMappings     = _pendingMappingCommands;
+                _originalProofingCommand = cleanUserMessage;
+                _isInTableMappingReview  = true;
+                _mappingQueue = ExtractMappingPairsFromJson(_pendingMappingCommands);
+                _includedIndexes.Clear();
+                _excludedIndexes.Clear();
+
+                if (_mappingQueue.Count > 0)
+                {
+                    Messages.Add(new ChatMessage
+                    {
+                        Role = "Assistant",
+                        Content = $"⚠️ **Review Required** — {_mappingQueue.Count} layer(s) matched from knowledge base\n\n" +
+                                  $"These layers were matched from previous learning. Confirm or adjust before proofing.\n\n{FormatMappingTable()}",
+                        IsTableContent = true,
+                        MappingRows = BuildMappingRows()
+                    });
+                }
+
+                OnPropertyChanged(nameof(IsQuickActionsEnabled));
+                IsBusy = false;
+                return;
             }
 
             int maxRetries = 2;
@@ -677,6 +908,7 @@ namespace BricsAI.Overlay.ViewModels
             _mappingQueue.Clear();
             _mappingReasons.Clear();
             _mappingConfidence.Clear();
+            _mappingSnapshotPaths.Clear();
             _includedIndexes.Clear();
             _excludedIndexes.Clear();
             OnPropertyChanged(nameof(IsQuickActionsEnabled));
@@ -700,6 +932,7 @@ namespace BricsAI.Overlay.ViewModels
             _mappingQueue.Clear();
             _mappingReasons.Clear();
             _mappingConfidence.Clear();
+            _mappingSnapshotPaths.Clear();
             _includedIndexes.Clear();
             _excludedIndexes.Clear();
             OnPropertyChanged(nameof(IsQuickActionsEnabled));
@@ -717,15 +950,21 @@ namespace BricsAI.Overlay.ViewModels
         }
 
         /// <summary>
-        /// Renders the current mapping queue as a fixed-width, monospace-friendly table
-        /// (rendered via ChatMessage.IsTableContent) with per-row confidence, the Mapper's
-        /// reasoning for the suggestion, and decision status.
+        /// Returns the instruction text shown below the mapping table. The actual row data
+        /// is now rendered by the XAML ItemsControl via BuildMappingRows().
         /// </summary>
-        private string FormatMappingTable()
+        private string FormatMappingTable() =>
+            "Hover a layer name to preview its snapshot image. Hover a reason to read the full text.\n\n" +
+            "Reply with row numbers to include/exclude (e.g. \"include 1,3,5\" or \"exclude 2,4\"), " +
+            "say \"confirm all\" to accept everything pending, \"cancel\" to abort, " +
+            "or tell me a rule to remember at any point.";
+
+        /// <summary>
+        /// Builds the structured row list for the interactive mapping table in the UI.
+        /// </summary>
+        private List<BricsAI.Overlay.Models.MappingRow> BuildMappingRows()
         {
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine("#   Source Layer                  Target Layer     Confidence  Reason                               Status");
-            sb.AppendLine("--  -----------------------------  ---------------  ----------  -----------------------------------  --------");
+            var rows = new List<BricsAI.Overlay.Models.MappingRow>();
             for (int i = 0; i < _mappingQueue.Count; i++)
             {
                 int idx = i + 1;
@@ -733,10 +972,19 @@ namespace BricsAI.Overlay.ViewModels
                 string confidence = _mappingConfidence.TryGetValue(source, out var c) ? c : "Low";
                 string reason = _mappingReasons.TryGetValue(source, out var r) && !string.IsNullOrWhiteSpace(r) ? r : "—";
                 string status = _includedIndexes.Contains(idx) ? "included" : _excludedIndexes.Contains(idx) ? "excluded" : "pending";
-                sb.AppendLine($"{idx,-3} {Truncate(source, 29),-29}  {Truncate(target, 15),-15}  {confidence,-10}  {Truncate(reason, 37),-37}  {status}");
+                _mappingSnapshotPaths.TryGetValue(source, out var snapshotPath);
+                rows.Add(new BricsAI.Overlay.Models.MappingRow
+                {
+                    Index      = idx,
+                    SourceLayer = source,
+                    TargetLayer = target,
+                    Confidence  = confidence,
+                    Reason      = reason,
+                    Status      = status,
+                    SnapshotPath = snapshotPath
+                });
             }
-            sb.Append("\nReply with row numbers to include/exclude (e.g. \"include 1,3,5\" or \"exclude 2,4\"), say \"confirm all\" to accept everything pending, \"cancel\" to abort, or tell me a rule to remember at any point.");
-            return sb.ToString();
+            return rows;
         }
 
         private static string Truncate(string s, int max) => s.Length <= max ? s : s.Substring(0, max - 1) + "…";

@@ -15,6 +15,18 @@
     </Window.DataContext>
 
     <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+
+        <!-- Dark tooltip style matching the app theme -->
+        <Style TargetType="ToolTip">
+            <Setter Property="Background" Value="#1E1E1E"/>
+            <Setter Property="Foreground" Value="#EEEEEE"/>
+            <Setter Property="BorderBrush" Value="#555555"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+
         <!-- Scrollbar Style -->
         <Style TargetType="{x:Type ScrollBar}">
             <Setter Property="Stylus.IsFlicksEnabled" Value="false"/>
@@ -159,15 +171,112 @@
                                             <TextBox.Style>
                                                 <Style TargetType="TextBox">
                                                     <Setter Property="TextWrapping" Value="Wrap"/>
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding IsTableContent}" Value="True">
-                                                            <Setter Property="FontFamily" Value="Consolas"/>
-                                                            <Setter Property="TextWrapping" Value="NoWrap"/>
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
                                                 </Style>
                                             </TextBox.Style>
                                         </TextBox>
+
+                                        <!-- Structured mapping-review table (visible only when MappingRows is populated) -->
+                                        <StackPanel Visibility="{Binding HasMappingRows, Converter={StaticResource BoolToVis}}" Margin="0,8,0,0">
+
+                                            <!-- Column header row -->
+                                            <Grid Margin="0,0,0,3">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="28"/>
+                                                    <ColumnDefinition Width="195"/>
+                                                    <ColumnDefinition Width="125"/>
+                                                    <ColumnDefinition Width="70"/>
+                                                    <ColumnDefinition Width="215"/>
+                                                    <ColumnDefinition Width="70"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Text="#"            Foreground="#00A8FF" FontWeight="SemiBold" FontSize="11" FontFamily="Consolas"/>
+                                                <TextBlock Grid.Column="1" Text="Source Layer"  Foreground="#00A8FF" FontWeight="SemiBold" FontSize="11" FontFamily="Consolas"/>
+                                                <TextBlock Grid.Column="2" Text="Target Layer"  Foreground="#00A8FF" FontWeight="SemiBold" FontSize="11" FontFamily="Consolas"/>
+                                                <TextBlock Grid.Column="3" Text="Confidence"   Foreground="#00A8FF" FontWeight="SemiBold" FontSize="11" FontFamily="Consolas"/>
+                                                <TextBlock Grid.Column="4" Text="Reason"       Foreground="#00A8FF" FontWeight="SemiBold" FontSize="11" FontFamily="Consolas"/>
+                                                <TextBlock Grid.Column="5" Text="Status"       Foreground="#00A8FF" FontWeight="SemiBold" FontSize="11" FontFamily="Consolas"/>
+                                            </Grid>
+
+                                            <!-- Separator -->
+                                            <Border Height="1" Background="#444" Margin="0,0,0,3"/>
+
+                                            <!-- Data rows -->
+                                            <ItemsControl ItemsSource="{Binding MappingRows}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Grid Margin="0,2">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="28"/>
+                                                                <ColumnDefinition Width="195"/>
+                                                                <ColumnDefinition Width="125"/>
+                                                                <ColumnDefinition Width="70"/>
+                                                                <ColumnDefinition Width="215"/>
+                                                                <ColumnDefinition Width="70"/>
+                                                            </Grid.ColumnDefinitions>
+
+                                                            <!-- Index -->
+                                                            <TextBlock Grid.Column="0" Text="{Binding Index}" Foreground="#CCC" FontSize="11" FontFamily="Consolas"/>
+
+                                                            <!-- Source Layer — full name + snapshot image on hover -->
+                                                            <TextBlock Grid.Column="1" Text="{Binding SourceLayerDisplay}" Foreground="#EEE" FontSize="11" FontFamily="Consolas" TextTrimming="CharacterEllipsis">
+                                                                <TextBlock.ToolTip>
+                                                                    <ToolTip>
+                                                                        <StackPanel MaxWidth="460">
+                                                                            <TextBlock Text="{Binding SourceLayer}" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12"/>
+                                                                            <Image Source="{Binding SnapshotImage}" MaxWidth="440" MaxHeight="330" Margin="0,8,0,0"
+                                                                                   Visibility="{Binding HasSnapshot, Converter={StaticResource BoolToVis}}"
+                                                                                   Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
+                                                                        </StackPanel>
+                                                                    </ToolTip>
+                                                                </TextBlock.ToolTip>
+                                                            </TextBlock>
+
+                                                            <!-- Target Layer -->
+                                                            <TextBlock Grid.Column="2" Text="{Binding TargetLayerDisplay}" Foreground="#EEE" FontSize="11" FontFamily="Consolas"/>
+
+                                                            <!-- Confidence — green for High, orange for Low -->
+                                                            <TextBlock Grid.Column="3" Text="{Binding Confidence}" FontSize="11" FontFamily="Consolas">
+                                                                <TextBlock.Style>
+                                                                    <Style TargetType="TextBlock">
+                                                                        <Setter Property="Foreground" Value="#4CAF50"/>
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsLowConfidence}" Value="True">
+                                                                                <Setter Property="Foreground" Value="#FFA726"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </TextBlock.Style>
+                                                            </TextBlock>
+
+                                                            <!-- Reason — full text on hover -->
+                                                            <TextBlock Grid.Column="4" Text="{Binding ReasonDisplay}" Foreground="#CCC" FontSize="11" FontFamily="Consolas" TextTrimming="CharacterEllipsis">
+                                                                <TextBlock.ToolTip>
+                                                                    <ToolTip>
+                                                                        <TextBlock Text="{Binding Reason}" TextWrapping="Wrap" MaxWidth="360" FontSize="12"/>
+                                                                    </ToolTip>
+                                                                </TextBlock.ToolTip>
+                                                            </TextBlock>
+
+                                                            <!-- Status — coloured by decision -->
+                                                            <TextBlock Grid.Column="5" Text="{Binding Status}" FontSize="11" FontFamily="Consolas">
+                                                                <TextBlock.Style>
+                                                                    <Style TargetType="TextBlock">
+                                                                        <Setter Property="Foreground" Value="#888"/>
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding Status}" Value="included">
+                                                                                <Setter Property="Foreground" Value="#4CAF50"/>
+                                                                            </DataTrigger>
+                                                                            <DataTrigger Binding="{Binding Status}" Value="excluded">
+                                                                                <Setter Property="Foreground" Value="#F44336"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </TextBlock.Style>
+                                                            </TextBlock>
+                                                        </Grid>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
 
                                         <!-- Animated Thinking Dots -->
                                         <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
@@ -231,10 +340,11 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     
-                    <TextBox Text="{Binding InputText, UpdateSourceTrigger=PropertyChanged}" 
+                    <TextBox Text="{Binding InputText, UpdateSourceTrigger=PropertyChanged}"
                              PreviewKeyDown="Input_PreviewKeyDown"
+                             IsEnabled="{Binding IsNotBusy}"
                              FontSize="14" CaretBrush="#00A8FF"
-                             MinHeight="40" MaxHeight="120" AcceptsReturn="True" TextWrapping="Wrap" 
+                             MinHeight="40" MaxHeight="120" AcceptsReturn="True" TextWrapping="Wrap"
                              VerticalScrollBarVisibility="Auto" ScrollViewer.CanContentScroll="True"
                              VerticalContentAlignment="Center" Background="#444" Foreground="White" BorderThickness="0" Padding="10,10,10,10"/>
                     
