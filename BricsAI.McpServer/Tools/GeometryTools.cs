@@ -42,6 +42,13 @@ namespace BricsAI.McpServer.Tools
         public static Task<string> ExplodeEntitiesByType(ComClient comClient, StaComHost sta, [Description("Entity type name, e.g. 'MULTILEADER'.")] string entityType)
             => ToolExec.RunAsync(comClient, sta, $"NET:QSELECT_EXPLODE:{entityType}");
 
+        [McpServerTool(Name = "explode_with_booth_lock"), Description(
+            "Locks the four booth output layers (Expo_BoothOutline, Expo_BoothNumber, Expo_MaxBoothOutline, Expo_MaxBoothNumber) " +
+            "then iteratively explodes all non-standard entities (up to 30 passes / 120 seconds). " +
+            "Booth entities are protected throughout. Does not erase remaining unexplodable entities. Long-running.")]
+        public static Task<string> ExplodeWithBoothLock(ComClient comClient, StaComHost sta)
+            => ToolExec.RunAsync(comClient, sta, "NET:EXPLODE_WITH_BOOTH_LOCK");
+
         [McpServerTool(Name = "delete_non_standard_entities"), Description("Erases every entity except a fixed whitelist of standard types (ARC, LINE, CIRCLE, ELLIPSE, POLYLINE, LWPOLYLINE, TEXT, SOLID).")]
         public static Task<string> DeleteNonStandardEntities(ComClient comClient, StaComHost sta)
             => ToolExec.RunAsync(comClient, sta, "NET:DELETE_NON_STANDARD");

@@ -51,6 +51,7 @@ namespace BricsAI.Overlay.ViewModels
         public ICommand RunProofingCommand { get; }
         public ICommand CleanGeometryCommand { get; }
         public ICommand GenerateSummaryCommand { get; }
+        public ICommand ExplodeGeometryCommand { get; }
 
         private readonly Services.ComClient _comClient; // Replaced PipeClient
         private readonly SurveyorAgent _surveyor;
@@ -87,6 +88,7 @@ namespace BricsAI.Overlay.ViewModels
             RunProofingCommand = new RelayCommand(async _ => await ExecuteQuickAction("Please proof this drawing for an exhibition context. Follow the standard A2Z layering, exploding, and layout rules."));
             CleanGeometryCommand = new RelayCommand(async _ => await ExecuteQuickAction("Clean up the drawing geometry. Delete floating layers, standard garbage layers (like dim/freeze), and run PURGE on everything."));
             GenerateSummaryCommand = new RelayCommand(async _ => await ExecuteQuickAction("I don't need macros run. Please just look at the Surveyor data and generate a Bill of Materials / Audit Summary for this layout."));
+            ExplodeGeometryCommand = new RelayCommand(async _ => await ExecuteQuickAction("__EXPLODE_WITH_BOOTH_LOCK__ Unlock all layers, lock booth output layers, then iteratively explode all complex entities."));
             
             // Initial greeting
             Messages.Add(new ChatMessage { Role = "Assistant", Content = "Hello! I am your BricsCAD AI Agent. connecting via COM Automation... (No NETLOAD needed)" });
@@ -383,6 +385,57 @@ namespace BricsAI.Overlay.ViewModels
                 return;
             }
 
+            // --- EXPLODE FASTPATH: bypass AI agents entirely for the Explode Geometry button ---
+            bool isExplodeCommand = userMessage.Contains("__EXPLODE_WITH_BOOTH_LOCK__", StringComparison.Ordinal);
+            if (isExplodeCommand && _comClient.IsConnected)
+            {
+                // Show the plan in chat before touching the drawing
+                Messages.Add(new ChatMessage
+                {
+                    Role = "Assistant",
+                    Content = "💥 **Explode Geometry — Execution Plan**\n\n" +
+                              "**Step 1:** Unlock all non-frozen layers so every entity is reachable by the explode command.\n" +
+                              "**Step 2:** Lock the four booth output layers (Expo_BoothOutline, Expo_BoothNumber, Expo_MaxBoothOutline, Expo_MaxBoothNumber) so they are never touched.\n" +
+                              "**Step 3:** Flatten any SPLINE entities (EXPLODE cannot handle them natively).\n" +
+                              "**Step 4:** Run iterative explode loop — up to 30 passes / 120 seconds — until all non-standard entities are resolved.\n\n" +
+                              "Starting execution now..."
+                });
+
+                var explodeMsg = new ChatMessage { Role = "Assistant", Content = "⚙️ Running explode with booth protection...", IsThinking = true };
+                Messages.Add(explodeMsg);
+                IProgress<string> explodeProgress = new Progress<string>(update => { explodeMsg.Content += $"\n{update}"; });
+                var explodeStopwatch = Stopwatch.StartNew();
+
+                try
+                {
+                    LoggerService.LogTransaction("PLUGIN", "MainViewModel: Explode fastpath — sending NET:EXPLODE_WITH_BOOTH_LOCK.");
+                    string explodeAction = @"{ ""tool_calls"": [{ ""command_name"": ""EXPLODE_WITH_BOOTH_LOCK"", ""lisp_code"": ""NET:EXPLODE_WITH_BOOTH_LOCK"" }] }";
+                    string explodeResult = await Task.Run(() => _comClient.ExecuteActionAsync(explodeAction, explodeProgress));
+
+                    explodeStopwatch.Stop();
+                    double explodeSeconds = Math.Round(explodeStopwatch.Elapsed.TotalSeconds, 1);
+
+                    explodeMsg.IsThinking = false;
+                    explodeMsg.Content = $"✅ Explode complete.\n\n{explodeResult}";
+                    LoggerService.LogTransaction("PLUGIN", $"MainViewModel: Explode fastpath done in {explodeSeconds}s. {explodeResult}");
+
+                    Messages.Add(new ChatMessage
+                    {
+                        Role = "Assistant",
+                        Content = $"📊 Performance: 0 API tokens consumed (explode runs natively via COM — no AI calls needed). Task completed in {explodeSeconds} seconds."
+                    });
+                }
+                catch (Exception ex)
+                {
+                    explodeMsg.IsThinking = false;
+                    explodeMsg.Content = $"⚠️ Explode error: {ex.Message}";
+                    LoggerService.LogTransaction("PLUGIN", $"MainViewModel: Explode fastpath error: {ex.Message}");
+                }
+
+                IsBusy = false;
+                return;
+            }
+
             // 1. Globally strip Drafter's physical layer locks BEFORE Surveyor or Executor begins,
             // but preserve final booth output layers that are intentionally locked by workflow.
             if (_comClient.IsConnected)
@@ -483,11 +536,16 @@ namespace BricsAI.Overlay.ViewModels
                                        cleanUserMessage.StartsWith("learn", StringComparison.OrdinalIgnoreCase) ||
                                        cleanUserMessage.StartsWith("forget", StringComparison.OrdinalIgnoreCase);
 
+            // Summary/BOM commands are read-only — they must not enter the interactive mapping review
+            // gate (which locks Quick Action buttons until the user confirms/aborts). The Executor
+            // handles summary requests via NET:MESSAGE plans and completes without locking the UI.
+            bool isSummaryOnly = cleanUserMessage.Contains("Bill of Materials", StringComparison.OrdinalIgnoreCase) ||
+                                 cleanUserMessage.Contains("Audit Summary", StringComparison.OrdinalIgnoreCase) ||
+                                 cleanUserMessage.Contains("I don't need macros run", StringComparison.OrdinalIgnoreCase);
+
             // Trigger the mapper whenever unknown layers exist and the command is not a pure memory
-            // instruction. The old keyword-gating (proof/map/remap) is removed because the new
-            // 2-phase approach is fast (~36s) and users expect proposals for any command that
-            // surfaces unknown layers (including Generate Summary).
-            if (unknownLayers.Any() && !skipMappingReview && !isMemoryInstruction)
+            // instruction or a read-only summary request.
+            if (unknownLayers.Any() && !skipMappingReview && !isMemoryInstruction && !isSummaryOnly)
             {
                 var mapperMsg = new ChatMessage { Role = "Assistant", Content = $"✨ Mapper Agent: Intercepting {unknownLayers.Count} unknown vendor layers...", IsThinking = true };
                 Messages.Add(mapperMsg);
@@ -561,16 +619,15 @@ namespace BricsAI.Overlay.ViewModels
                                         {
                                             string filePath = fp.GetString() ?? "";
                                             string formatUsed = fmt.GetString() ?? "";
-                                            // Claude Vision only supports PNG/JPEG/GIF/WebP — skip BMP fallbacks
-                                            if (!string.Equals(formatUsed, "BMP", StringComparison.OrdinalIgnoreCase) &&
-                                                System.IO.File.Exists(filePath))
+                                            if (System.IO.File.Exists(filePath))
                                             {
-                                                visualInputs.Add((m.SourceLayer, m.TargetLayer, filePath));
+                                                // Always store for tooltip hover (WPF BitmapImage handles BMP fine)
                                                 _mappingSnapshotPaths[m.SourceLayer] = filePath;
-                                            }
-                                            else
-                                            {
-                                                mapProgress.Report($"   ⚠️ Snapshot fell back to BMP for '{m.SourceLayer}' — skipping visual verification.");
+                                                // Claude Vision only supports PNG/JPEG/GIF/WebP — skip BMP for classification
+                                                if (!string.Equals(formatUsed, "BMP", StringComparison.OrdinalIgnoreCase))
+                                                    visualInputs.Add((m.SourceLayer, m.TargetLayer, filePath));
+                                                else
+                                                    mapProgress.Report($"   ⚠️ Snapshot fell back to BMP for '{m.SourceLayer}' — hover preview available, skipping visual verification.");
                                             }
                                         }
                                     }

@@ -1,191 +1,181 @@
-# BricsAI Developer Onboarding
+# BricsAI Overlay — User Guide
 
-This guide gets a developer productive on the BricsAI stack, which has two runtime entrypoints sharing common infrastructure.
+This guide explains how to use the BricsAI Overlay app to proof an exhibition floor plan drawing in BricsCAD.
 
-## 1) Architecture Snapshot
+---
 
-Two data paths, one plugin/COM layer:
+## What is the Overlay?
 
-- Claude client -> MCP stdio -> BricsAI.McpServer -> STA COM bridge -> plugin execution (V15/V19) -> BricsCAD active document
-- BricsAI.Overlay (WPF) -> multi-agent pipeline (Surveyor -> Mapper -> MappingReview -> Executor -> Validator) -> ComClient (its own STA UI thread) -> plugin execution (V15/V19) -> BricsCAD active document
+The BricsAI Overlay is a chat-based desktop app that sits alongside BricsCAD. You click a button or type a request, and the app automatically cleans and organises your drawing using AI — renaming layers, exploding complex geometry, and checking booth numbers — without you needing to know any CAD commands.
 
-Core projects:
+---
 
-- BricsAI.McpServer: host, tools, prompts, COM orchestration via a dedicated STA thread (needed because it's a console/stdio host with no natural UI thread)
-- BricsAI.Overlay: WPF chat app; multi-agent LLM pipeline calling the Anthropic API directly; COM calls run on the UI thread, which is already STA
-- BricsAI.Core: `IToolPlugin` contract, `KnowledgeService` (SQLite), `LoggerService`, `Mock` (shared in-memory mock CAD backend)
-- BricsAI.Plugins.V15Tools: V15 command implementations
-- BricsAI.Plugins.V19Tools: V19 command implementations
+## Before You Start
 
-Both McpServer and Overlay load **both** plugin assemblies at startup (`PluginManager.LoadPlugins()` scans for every `BricsAI.Plugins*.dll` next to the exe) and pick the plugin whose `TargetVersion` matches the connected BricsCAD version.
+1. **Open BricsCAD** and load the drawing you want to proof.
+2. **Launch the Overlay** by running `BricsAI.Overlay.exe` (your team will give you this file).
+3. The Overlay connects to BricsCAD automatically. You will see a greeting message in the chat area on the right.
 
-## 2) Environment Requirements
+---
 
-- Windows
-- BricsCAD V15 or V19 installed (or use the mock backend — see below)
-- .NET 9 SDK
-- Claude Code or Claude Desktop (for McpServer) — or an Anthropic API key (for Overlay)
+## The Screen Layout
 
-## 3) Build and Run
-
-Build solution:
-
-```powershell
-dotnet build BricsAI.sln -c Release
+```
+┌──────────────────┬──────────────────────────────────────┐
+│  Quick Actions   │                                      │
+│  (left sidebar)  │         Chat Area (right)            │
+│                  │                                      │
+│  🤖 Run Full AI  │  Messages appear here as the app     │
+│  🧹 Clean Geom.  │  works through your drawing.         │
+│  💥 Explode Geom │                                      │
+│  📊 Generate Sum │                                      │
+│                  │──────────────────────────────────────│
+│                  │  Type here and press Enter           │
+└──────────────────┴──────────────────────────────────────┘
 ```
 
-Run MCP server:
+All four buttons on the left are disabled while the app is working, so you cannot accidentally start two things at once.
 
-```powershell
-dotnet run --project .\BricsAI.McpServer\BricsAI.McpServer.csproj -c Release
+---
+
+## The Four Quick Action Buttons
+
+### 🤖 Run Full AI Proofing
+**Use this for a complete drawing proof.**
+
+This is the main button. It runs the full sequence:
+1. Surveys all layers in the drawing.
+2. Matches vendor layer names to the standard A2Z layer scheme using AI.
+3. Shows you a **review table** (see below) so you can confirm or adjust before anything changes.
+4. After you confirm, applies the layer mappings, cleans geometry, and validates the result.
+
+Use this at the start of every job.
+
+---
+
+### 🧹 Clean Geometry
+**Use this to purge junk layers and unused objects.**
+
+Deletes all layers prefixed `Deleted_` and runs a full PURGE on the drawing. No AI call is made — it runs instantly via native CAD commands.
+
+Use this after proofing if you want to do a final tidy-up.
+
+---
+
+### 💥 Explode Geometry
+**Use this to explode complex entities without running full proofing.**
+
+Runs a standalone explode pass in this exact order:
+1. Unlocks every layer in the drawing (except the four protected booth layers).
+2. Locks the four booth output layers so they are never touched: `Expo_BoothOutline`, `Expo_BoothNumber`, `Expo_MaxBoothOutline`, `Expo_MaxBoothNumber`.
+3. Deletes all POINT entities (they cannot be exploded and serve no purpose).
+4. Deletes all 3D Face entities (they cannot be exploded; only deletion works).
+5. Flattens all SPLINE entities (converts them to polylines).
+6. Runs an iterative explode loop — up to 30 passes — until all remaining complex entities (blocks, MText, hatches, etc.) are resolved.
+
+The chat shows each step and the final result. No API tokens are used — this runs natively.
+
+Use this when you only need to clean geometry without doing a full proof (for example, on a drawing you have already mapped before).
+
+---
+
+### 📊 Generate Summary
+**Use this for a read-only audit — no changes to the drawing.**
+
+Asks the AI to look at the drawing's layer and booth data and generate a Bill of Materials or audit summary. Nothing is moved or deleted.
+
+Use this when someone asks "what's in this drawing?" without wanting to proof it yet.
+
+---
+
+## The Mapping Review Table
+
+When you click **Run Full AI Proofing**, after the AI has classified all the layers, a table appears in the chat like this:
+
+```
+#  | Source Layer      | Target Layer        | Confidence | Action
+---|-------------------|---------------------|------------|--------
+1  | A-WALL            | Expo_Building       | High       | Include
+2  | V_BOOTH_LINES     | Expo_BoothOutline   | High       | Include
+3  | MISC_STUFF        | Deleted_MISC_STUFF  | Low        | Pending
+4  | UNKNOWN_1         | Deleted_UNKNOWN_1   | Low        | Pending
 ```
 
-Run the Overlay app (set `Anthropic.ApiKey` in `BricsAI.Overlay\appsettings.json` first — gitignored, never commit a real key):
+**Proofing does not start until you confirm this table.** You are always in control.
 
-```powershell
-dotnet run --project .\BricsAI.Overlay\BricsAI.Overlay.csproj -c Release
-```
+### What you can type in reply:
 
-Register McpServer in Claude Code (local scope):
-
-```powershell
-claude mcp add --scope local --transport stdio bricsai -- "C:\Users\gbhowmik\Documents\BricsAI_Claude_v3.3.0\BricsAI.McpServer\bin\Release\net9.0-windows\BricsAI.McpServer.exe"
-```
-
-### Develop without a running BricsCAD instance
-
-Set `BRICSAI_MOCK_CAD=1` before launching either app to connect to an in-memory mock (`BricsAI.Core.Mock.MockDrawingSeeder`) instead of real COM — seeded with standard A2Z layers, a few vendor layers, and 5 booth outlines (one intentionally missing its number, to exercise `count_empty_booths`/`select_empty_booths`). Real Anthropic API calls still happen in Overlay under mock mode; only the CAD layer is faked.
-
-## 4) Key Runtime Services
-
-- StaComHost (McpServer only): dedicated STA thread/message pump for COM safety, since a stdio host has no natural UI thread
-- ComClient: BricsCAD access and command dispatch, plus active CAD file metadata. Each app has its own copy (`BricsAI.McpServer/Services/ComClient.cs`, `BricsAI.Overlay/Services/ComClient.cs`) — near-identical logic, kept separate rather than shared so each app's execution guards (e.g. Overlay's proofing-completeness auto-guards) stay independent.
-- PluginManager: version-aware plugin loading (also duplicated per app, same reason)
-- ToolExec (McpServer only): common execution wrapper with per-action usage logging
-
-## 5) Knowledge Store Behavior
-
-Persistent mapping/rule memory is a **local SQLite database, shared between both apps**:
-
-- Runtime location: `%LOCALAPPDATA%\BricsAI\agent_knowledge.db` (override with `BRICSAI_KNOWLEDGE_DIR`)
-- Checked-in starter copy: `agent_knowledge.db` at the **solution root** — never read/written by either app at runtime; copy it to `%LOCALAPPDATA%\BricsAI\` manually when setting up a new machine to seed it with the accumulated mapping history
-- Schema: `layer_mappings` (`source_layer` TEXT PRIMARY KEY, upserted — no dedupe pass needed) and `free_form_rules` (append-only)
-- `KnowledgeService.GetLearnings()` — full text dump (mappings + rules), used by `get_learned_mappings` / any caller that wants everything
-- `KnowledgeService.GetFreeFormRules()` — rules only, no mappings; use this when embedding knowledge into an LLM prompt, since dumping hundreds of mapping lines into every call burns tokens for no benefit (mappings are applied deterministically via `apply_layer_mappings`, not by the model reasoning about them)
-- `KnowledgeService.GetLayerMappingsDictionary()` — indexed dictionary read
-- `KnowledgeService.CompactFile()` — now runs `VACUUM` (kept the old name since it's the one existing caller, `BricsAI.McpServer/Program.cs`); no longer a dedupe pass since upserts already prevent duplicate rows
-
-## 6) Overlay Mapper — Phase 1 Batching
-
-`MapperAgent.ClassifyByNameAsync` previously sent all unknown layers in a single LLM call. For drawings with 100+ vendor layers this caused token-limit failures that returned 0 classifications silently (the `catch {}` block swallowed the JSON parse error). The method now batches at **40 layers per call** via a private `ClassifySingleBatchAsync` and aggregates results across all batches.
-
-The three-phase pipeline is unchanged in structure:
-
-- **Phase 1** — name classification (LLM, batched). Confident results go directly to the mapping table. UNCERTAIN results go to Phase 2.
-- **Phase 2** — geometry polling via `NET:POLL_LAYER_SEMANTICS`, then batch geometry classification (1 LLM call). Low-confidence results go to Phase 3.
-- **Phase 3** — snapshot export via `NET:EXPORT_LAYER_SNAPSHOT`, then visual verification (1 LLM vision call per low-confidence batch). BMP fallbacks are skipped (Claude Vision requires PNG/JPEG/GIF/WebP).
-
-When Phase 1+2+3 return zero mappings (e.g. all layers were genuinely ambiguous), the tabular review is still shown — all unknown layers are proposed as `Deleted_` with Low confidence so the user can override specific rows before proofing runs.
-
-When all layers are already in the DB (`unknownLayers` is empty), the tabular review is built from the DB mappings for that drawing so the user can confirm or adjust before any destructive proofing step runs. Proofing **never starts automatically** regardless of DB state.
-
-## 6a) Overlay Mapping Review — Interaction Model
-
-`MappingReviewAgent` classifies user replies into the following intents:
-
-| Intent | Behaviour |
+| What you type | What happens |
 |---|---|
-| `INCLUDE` | Includes specified rows; **auto-excludes all remaining pending rows**. Table reshown; wait for confirm. |
-| `EXCLUDE` | Excludes specified rows; **auto-includes all remaining pending rows**. Table reshown; wait for confirm. |
-| `INCLUDE_EXCLUDE` | Both lists applied; unspecified rows auto-excluded. Table reshown; wait for confirm. |
-| `HIGH_CONFIDENCE_ONLY` | All High rows included, all Low rows excluded in one step. Table reshown; wait for confirm. |
-| `CONFIRM_ALL` | Includes all remaining pending rows and **immediately fires** `CompleteMappingReview()`. |
-| `MEMORIZE` | Rule saved to SQLite; review stays open. |
-| `QUESTION` | Answered by `AnswerMappingQuestionAsync`; review stays open. |
-| `ACTION` | Layer visibility action built by `BuildLayerActionPlanAsync` and executed via COM; review stays open. |
-| `ABORT` | `AbortMappingReview()` — all proposals discarded, proofing does not start. |
+| `include 1,2` | Includes rows 1 and 2; all other pending rows are auto-excluded |
+| `exclude 3` | Excludes row 3; all other pending rows are auto-included |
+| `include 1,2 and exclude 3` | Applies both at once; anything else is auto-excluded |
+| `process high confidence only` | Includes all High rows, excludes all Low rows |
+| `confirm` / `yes` / `looks good` | Confirms whatever is decided and starts proofing |
+| `confirm all` | Includes every row and starts proofing immediately |
+| `remember A-WALL always maps to Expo_Building` | Saves this as a permanent rule; review stays open |
+| `stop` / `cancel` | Cancels — nothing is changed in the drawing |
 
-**Key invariant**: only `CONFIRM_ALL` (when `allDecided`) triggers `CompleteMappingReview()`. INCLUDE/EXCLUDE/INCLUDE_EXCLUDE/HIGH_CONFIDENCE_ONLY auto-decide rows and reshow the table, always requiring one explicit confirm step before proofing.
+**Tip:** The safest default for a first run is to type `process high confidence only` then `confirm`. High-confidence rows are almost always correct. You can deal with low-confidence layers manually afterwards.
 
-**IsBusy race fix**: `CompleteMappingReview()` fires `ExecuteQuickAction` as fire-and-forget. The original `SendMessageAsync` invocation (the table-review turn) returns immediately after `CompleteMappingReview()` without setting `IsBusy = false`, so the newly started proofing run's `IsBusy = true` is never overwritten.
+---
 
-## 7) MCP Tool / Overlay Command Parity
+## Step-by-Step: Proofing a Drawing for the First Time
 
-- get_layer_geometry(layer, offset, maxEntities) / `NET:GET_LAYER_GEOMETRY`
-- export_layer_snapshot(layer, format) / `NET:EXPORT_LAYER_SNAPSHOT`
-- select_layer, select_outer/inner, select_building_lines, unlock_layers_by_prefix — implemented in the shared plugins and always callable via MCP; Overlay's `ExecutorAgent` only recently gained visibility into these (they were missing from the plugins' `GetPromptExample()`, which is the only thing Overlay's Executor prompt reads to know what `NET:` commands exist — MCP tool descriptions are separate `[McpServerTool(Description=...)]` attributes and were unaffected)
+1. Open BricsCAD and load your drawing file.
+2. Launch the Overlay. Wait for the greeting message.
+3. Click **🤖 Run Full AI Proofing**.
+4. The app surveys the drawing and classifies layers. Watch the chat — each phase is shown as it runs.
+5. A mapping review table appears. Read through it.
+6. Type `process high confidence only` and press Enter.
+7. The table updates. Check that the included rows look right.
+8. Type `confirm` and press Enter.
+9. Proofing runs: layers are renamed, geometry is cleaned, and a validation check is done. The chat shows each step.
+10. When the green tick appears, the drawing is proofed. Save it in BricsCAD.
 
-Design intent:
+---
 
-- geometry paging protects context/window size on large layers
-- snapshot export supports human visual verification
+## Step-by-Step: Exploding a Previously-Mapped Drawing
 
-## 7a) Geometry Explosion — Stall Detection and POINT Handling
+If you have already proofed a drawing before and just need to re-explode the geometry:
 
-**QSelectExplode (ExplodeToolV15/V19):**
-- Counts entities **before** each explode pass. After the explode+sleep, reselects and counts again. If `countAfter >= countBefore`, the type cannot be exploded — returns immediately with a descriptive skip message instead of exhausting all retry passes.
-- `totalExploded` now accumulates the actual reduction (`countBefore - countAfter`) per pass, not the pre-explode count.
+1. Open BricsCAD and load the drawing.
+2. Launch the Overlay.
+3. Click **💥 Explode Geometry**.
+4. Watch the chat. The steps are shown as they run (unlock layers → lock booths → delete points/3D faces → flatten splines → explode loop).
+5. When complete, the chat shows how many entities were resolved and whether any remained (unexplodable items like xrefs or dynamic blocks).
+6. Save the drawing in BricsCAD.
 
-**PrepareGeometry (GeometryToolsPlugin V15/V19):**
-- POINT entities are erased via LISP **before** the main explosion loop (`ssget "X" '((0 . "POINT"))`). POINTs cannot be exploded and carry no useful geometry — attempting to explode them burns passes for no effect.
-- All other non-standard types (HATCH, unknown block types, etc.) are attempted for explosion — only types that fail the count-before/after check are skipped.
-- Stall detection triggers when the non-standard entity count is identical for 2 consecutive passes. Remaining entities are erased and the return string includes `"WARNING: N entities could not be exploded..."`.
-- Return strings: `"Geometry Prepared Natively: Executed N global wipe cycles. All complex entities were successfully exploded."` on a clean run; `"...WARNING: N entities could not be exploded after N passes and were erased (likely locked, xref-attached, or dynamic blocks). Review the drawing for missing geometry."` when erasure occurred.
+---
 
-**ValidatorAgent:** treats any `WARNING:` in geometry logs as a partial failure and includes the warning text in its FAIL response so the Executor can report it to the user.
+## Frequently Asked Questions
 
-## 8) Logging and Observability
+**Q: Can I type my own requests in the chat?**
+Yes. The text box at the bottom accepts natural language. For example: "Show me all booth outlines that are missing a number" or "Move everything on layer MISC to Deleted_MISC."
 
-transaction_log.txt now includes:
+**Q: Will the app change my drawing without asking?**
+No. The mapping review table always appears before any destructive step. Proofing never starts automatically.
 
-- action category and text
-- CAD file name/path
-- input/output character counts
-- estimated token counts
-- elapsed milliseconds
+**Q: What are the four protected booth layers?**
+`Expo_BoothOutline`, `Expo_BoothNumber`, `Expo_MaxBoothOutline`, and `Expo_MaxBoothNumber`. These are always locked before any explode or cleanup operation so they can never be accidentally modified.
 
-Interpretation rule:
+**Q: The button is greyed out — why?**
+The app is currently working. All buttons lock while a task is running and unlock automatically when it finishes.
 
-- treat token fields as directional usage signals, not billing truth
+**Q: The app connected but nothing is happening in BricsCAD.**
+Make sure BricsCAD is open with a drawing loaded (not just the application open with no file). Then try your action again.
 
-## 9) Common Failure Mode: Build Locks
+**Q: I made a mistake during the review and want to start over.**
+Type `stop` or `cancel` to abort the review without changing the drawing. Then click the proofing button again to start fresh.
 
-Cause:
+---
 
-- a running BricsAI.McpServer or BricsAI.Overlay process holds the executable or plugin DLLs
+## What the Chat Messages Mean
 
-Fix:
-
-```powershell
-Get-Process BricsAI.McpServer,BricsAI.Overlay -ErrorAction SilentlyContinue | Stop-Process -Force
-dotnet build BricsAI.sln -c Release
-```
-
-## 10) Safe Contribution Workflow
-
-1. Build before and after change.
-2. Validate tool behavior with a live drawing, or with `BRICSAI_MOCK_CAD=1` for a fast, deterministic dev loop.
-3. Keep destructive actions approval-gated in prompts/workflows.
-4. If you change something in `BricsAI.Plugins.V15Tools`/`V19Tools` or `BricsAI.Core`, remember both McpServer and Overlay consume it — check both, not just the one you're working in.
-5. Update docs when tools or flow change.
-6. Commit with clear scope and operational notes.
-
-## 11) Suggested First Validation Script
-
-Against a real BricsCAD instance, or headlessly with `BRICSAI_MOCK_CAD=1`:
-
-1. list_layers
-2. get_unmapped_layers
-3. poll_layer_semantics on unknown layers
-4. get_layer_geometry for ambiguous cases
-5. apply_layer_mappings on approved set
-6. run_full_proofing (McpServer) / send "proof this drawing" to Overlay, which emits the equivalent `NET:RUN_FULL_PROOFING`
-7. export_layer_snapshot for QA artifacts
-
-For Overlay specifically, also exercise the full mapping review flow:
-- Trigger a proofing run against a drawing with unmapped layers.
-- Observe Phase 1 batching: layers are classified 40 at a time; progress shown per batch.
-- Reply `include 1,3,5` — confirm all others are auto-excluded and the table reshows with final statuses.
-- Reply `confirm` — proofing should start immediately (buttons lock, no further prompts).
-- Also test mid-review: `remember X always maps to Expo_Building` → (confirm review stays open) → `confirm all`.
-- Also test abort: `stop` → review discarded, proofing does not start.
+| Icon | Meaning |
+|---|---|
+| Spinning dots (…) | The app is working |
+| ✅ | Step completed successfully |
+| ⚠️ | Something was skipped or only partially completed — read the message |
+| 📊 Performance: 0 API tokens | This step ran natively — no AI cost |
+| 📊 Performance: N tokens | The AI was used for this step |

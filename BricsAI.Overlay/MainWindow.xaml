@@ -111,7 +111,7 @@
                     </Button>
                     
                     <Button Content="🧹 Clean Geometry" Command="{Binding CleanGeometryCommand}" IsEnabled="{Binding IsQuickActionsEnabled}"
-                            Height="40" Margin="0,0,0,10" Background="#333" Foreground="White" BorderThickness="1" BorderBrush="#555" 
+                            Height="40" Margin="0,0,0,10" Background="#333" Foreground="White" BorderThickness="1" BorderBrush="#555"
                             HorizontalContentAlignment="Left" Padding="10,0" ToolTip="Purge, Overkill, and delete invisible/frozen layers.">
                         <Button.Resources>
                             <Style TargetType="Border">
@@ -119,7 +119,17 @@
                             </Style>
                         </Button.Resources>
                     </Button>
-                    
+
+                    <Button Content="💥 Explode Geometry" Command="{Binding ExplodeGeometryCommand}" IsEnabled="{Binding IsQuickActionsEnabled}"
+                            Height="40" Margin="0,0,0,10" Background="#333" Foreground="White" BorderThickness="1" BorderBrush="#555"
+                            HorizontalContentAlignment="Left" Padding="10,0" ToolTip="Unlock all layers, lock booth output layers, then iteratively explode all complex entities.">
+                        <Button.Resources>
+                            <Style TargetType="Border">
+                                <Setter Property="CornerRadius" Value="6"/>
+                            </Style>
+                        </Button.Resources>
+                    </Button>
+
                     <Button Content="📊 Generate Summary" Command="{Binding GenerateSummaryCommand}" IsEnabled="{Binding IsQuickActionsEnabled}"
                             Height="40" Margin="0,0,0,10" Background="#333" Foreground="White" BorderThickness="1" BorderBrush="#555" 
                             HorizontalContentAlignment="Left" Padding="10,0" ToolTip="Ask Surveyor to count objects and extract BOM without mutating variables.">

@@ -9,8 +9,7 @@ Both share the same BricsCAD COM automation layer (version-specific plugin DLLs)
 
 ## Quick Documents
 
-- End-user one-page SOP: End_User_SOP.md
-- Developer onboarding: Developer_Onboarding.md
+- End-user Overlay guide: Developer_Onboarding.md
 - Detailed training playbook: Training_Guide.md
 - Release history: RELEASE_NOTES.md
 
