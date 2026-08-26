@@ -106,9 +106,14 @@ namespace BricsAI.Plugins.V15Tools
                 
                 string sourceLayer = layerParts[0].Trim();
                 string targetLayer = layerParts[1].Trim();
-                
+
+                var protectedBooths = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase)
+                    { "Expo_BoothOutline", "Expo_BoothNumber", "Expo_MaxBoothOutline", "Expo_MaxBoothNumber" };
+                if (protectedBooths.Contains(targetLayer))
+                    return $"Rejected: '{targetLayer}' is a protected booth output layer and cannot be a mapping target.";
+
                 KnowledgeService.SaveLearning($"Map the layer '{sourceLayer}' to standard layer '{targetLayer}'.");
-                
+
                 return $"Learned mapping natively: {sourceLayer} -> {targetLayer}";
             }
             catch (System.Exception ex)
@@ -627,6 +632,8 @@ namespace BricsAI.Plugins.V15Tools
                     string tgt = kvp.Value;
 
                     if (string.Equals(src, tgt, StringComparison.OrdinalIgnoreCase)) continue;
+                    // Booth output layers are write-protected — never remap any vendor layer onto them.
+                    if (boothLayers.Contains(tgt)) continue;
 
                     // Escape quotes for LISP string literals
                     string escapedSrc = src.Replace("\"", "\\\"");
@@ -722,6 +729,7 @@ namespace BricsAI.Plugins.V15Tools
                 // Cancel any active command, then erase all entities on the layer via ssget
                 doc.SendCommand("\x03\x03");
                 doc.SendCommand($"(if (setq ss (ssget \"_X\" '((8 . \"{safe}\")))) (command \"_.ERASE\" ss \"\"))\n");
+                System.Threading.Thread.Sleep(400); // Wait for BricsCAD to finish processing the erase
 
                 // ssget "_X" handles all model-space and layout entities.
                 // COM pass covers only *Paper_Space* layouts (viewport objects, etc.) —

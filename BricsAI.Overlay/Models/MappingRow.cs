@@ -16,8 +16,8 @@ namespace BricsAI.Overlay.Models
         public bool IsLowConfidence => Confidence == "Low";
         public bool HasSnapshot => !string.IsNullOrEmpty(SnapshotPath) && File.Exists(SnapshotPath);
 
-        // Truncated versions for column display
-        public string SourceLayerDisplay => Truncate(SourceLayer, 30);
+        // Truncated versions for column display — source layer shows in full; others truncate with hover
+        public string SourceLayerDisplay => SourceLayer;
         public string TargetLayerDisplay => Truncate(TargetLayer, 16);
         public string ReasonDisplay => Truncate(Reason, 36);
 

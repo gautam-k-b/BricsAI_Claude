@@ -14,6 +14,12 @@ namespace BricsAI.Overlay.Services
 
         public bool IsConnected => _acadApp != null;
 
+        public string GetActiveDocumentPath()
+        {
+            try { return (string)(_acadApp?.ActiveDocument?.FullName ?? ""); }
+            catch { return ""; }
+        }
+
         // P/Invoke for GetActiveObject
         [DllImport("oleaut32.dll", PreserveSig = false)]
         private static extern void GetActiveObject(ref Guid rclsid, IntPtr reserved, [MarshalAs(UnmanagedType.IDispatch)] out object? ppunk);

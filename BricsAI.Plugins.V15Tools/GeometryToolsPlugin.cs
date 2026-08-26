@@ -424,188 +424,66 @@ namespace BricsAI.Plugins.V15Tools
         {
             try
             {
-                // ─── Suppress display overhead for the entire operation ───
+                // Suppress display overhead for the entire run — ExplodeHelper restores CMDECHO at the end.
                 SendCommandSafe(doc, "(setvar \"REGENMODE\" 0)\n");
-                SendCommandSafe(doc, "(setvar \"CMDECHO\" 0)\n");
 
-                LoggerService.LogTransaction("PLUGIN", "PrepareGeometry: locking booth target layers.");
-                // 1. Lock booth layers natively (targets)
-                try { doc.Layers.Item("Expo_BoothNumber").Lock = true; } catch { }
-                try { doc.Layers.Item("Expo_BoothOutline").Lock = true; } catch { }
-                try { doc.Layers.Item("Expo_MaxBoothNumber").Lock = true; } catch { }
-                try { doc.Layers.Item("Expo_MaxBoothOutline").Lock = true; } catch { }
+                // Lock booth output layers (canonical names, mapped vendor sources, heuristic fallback).
+                ExplodeHelper.LockBoothLayers(doc);
 
-                // 1b. Lock mapped vendor sources
+                // Collect vendor source layers that map to any booth target — keep them locked every pass.
+                var extraLocked = new List<string>();
                 try
                 {
                     var mappings = KnowledgeService.GetLayerMappingsDictionary();
-                    if (mappings != null && mappings.Count > 0)
+                    if (mappings != null)
                     {
-                        foreach (var kvp in mappings)
+                        var boothTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                         {
-                            string target = kvp.Value.Trim();
-                            if (target.Equals("Expo_BoothOutline", StringComparison.OrdinalIgnoreCase) ||
-                                target.Equals("Expo_BoothNumber", StringComparison.OrdinalIgnoreCase) ||
-                                target.Equals("Expo_MaxBoothOutline", StringComparison.OrdinalIgnoreCase) ||
-                                target.Equals("Expo_MaxBoothNumber", StringComparison.OrdinalIgnoreCase))
-                            {
-                                try { doc.Layers.Item(kvp.Key.Trim()).Lock = true; } catch { }
-                            }
-                        }
+                            "Expo_BoothOutline", "Expo_BoothNumber",
+                            "Expo_MaxBoothOutline", "Expo_MaxBoothNumber"
+                        };
+                        foreach (var kvp in mappings)
+                            if (boothTargets.Contains(kvp.Value.Trim()))
+                                extraLocked.Add(kvp.Key.Trim());
                     }
                 }
                 catch { }
 
-                // 1c. Heuristic fallback: lock unmapped booth-like layers
+                // Heuristic fallback: also lock layers whose normalised name looks like a booth layer.
                 for (int i = 0; i < doc.Layers.Count; i++)
                 {
                     try
                     {
                         var lyr = doc.Layers.Item(i);
-                        string nName = ((string)lyr.Name).ToLower()
+                        string norm = ((string)lyr.Name).ToLower()
                             .Replace(" ", "").Replace("_", "").Replace("-", "");
-                        if (nName.Contains("boothoutline") || nName.Contains("boothnumber") ||
-                            nName.Contains("maxboothoutline") || nName.Contains("maxboothnumber"))
-                        {
+                        if (norm.Contains("boothoutline") || norm.Contains("boothnumber") ||
+                            norm.Contains("maxboothoutline") || norm.Contains("maxboothnumber"))
                             lyr.Lock = true;
-                        }
                     }
                     catch { }
                 }
 
-                SendCommandSafe(doc, "(setvar \"PICKFIRST\" 1)\n");
+                LoggerService.LogTransaction("PLUGIN", "PrepareGeometry: starting shared ExplodeHelper.Run.");
+                object docObj = doc; // Cast to object so the tuple return type stays statically typed
+                var (passCount, _, remaining) = ExplodeHelper.Run(docObj, extraLocked);
 
-                // 2a. Flatten splines
-                try
+                // PrepareGeometry erases any truly unexplodable leftovers (hard cleanup for full proofing).
+                if (remaining > 0)
                 {
-                    string sName = "BA_Spline_" + Guid.NewGuid().ToString("N").Substring(0, 10);
-                    var ssetSplines = doc.SelectionSets.Add(sName);
-                    ssetSplines.Select(5, Type.Missing, Type.Missing, new short[] { 0 }, new object[] { "SPLINE" });
-                    if (ssetSplines.Count > 0)
-                    {
-                        SendCommandSafe(doc, "\x03\x03");
-                        SendCommandSafe(doc, "(if (setq ss (ssget \"_X\" '((0 . \"SPLINE\")))) (sssetfirst nil ss))\n");
-                        SendCommandSafe(doc, "FLATTEN\n\n\n");
-                    }
-                    try { ssetSplines.Delete(); } catch { }
+                    const string wl = "(if (setq ss (ssget \"_X\" '((-4 . \"<NOT\") (-4 . \"<OR\") (0 . \"ARC\") (0 . \"LINE\") (0 . \"CIRCLE\") (0 . \"ELLIPSE\") (0 . \"LWPOLYLINE\") (0 . \"TEXT\") (0 . \"SOLID\") (-4 . \"OR>\") (-4 . \"NOT>\")))) (command \"_.ERASE\" ss \"\"))\n";
+                    SendCommandSafe(doc, "\x03\x03");
+                    SendCommandSafe(doc, wl);
+                    System.Threading.Thread.Sleep(500);
                 }
-                catch { }
 
-                SendCommandSafe(doc, "(setvar \"QATOL\" 0.001)\n");
-
-                // 2b. Global Exhaustive Explosion — REUSE one SelectionSet across all passes
-                string whitelistFilter = "'((-4 . \"<NOT\") (-4 . \"<OR\") (0 . \"ARC\") (0 . \"LINE\") (0 . \"CIRCLE\") (0 . \"ELLIPSE\") (0 . \"LWPOLYLINE\") (0 . \"TEXT\") (0 . \"SOLID\") (-4 . \"OR>\") (-4 . \"NOT>\"))";
-                short[] wType = new short[] { -4, -4, 0, 0, 0, 0, 0, 0, 0, -4, -4 };
-                object[] wData = new object[] { "<NOT", "<OR", "ARC", "LINE", "CIRCLE", "ELLIPSE", "LWPOLYLINE", "TEXT", "SOLID", "OR>", "NOT>" };
-
-                // Delete POINT entities upfront — they cannot be exploded and serve no purpose in the final geometry.
-                SendCommandSafe(doc, "\x03\x03");
-                SendCommandSafe(doc, "(if (setq ss (ssget \"_X\" '((0 . \"POINT\")))) (command \"_.ERASE\" ss \"\"))\n");
-                System.Threading.Thread.Sleep(200);
-
-                // FIX: Create ONE reusable SelectionSet outside the loop
-                string reusableName = "BA_GlobalExp_Reuse";
-                dynamic? ssetReuse = null;
-                try { ssetReuse = doc.SelectionSets.Item(reusableName); ssetReuse.Delete(); } catch { }
-                ssetReuse = doc.SelectionSets.Add(reusableName);
-
-                int maxPasses = 30;
-                int passCount = 0;
-                int previousNonStandardCount = -1;
-                int identicalCountLoops = 0;
-                int finalNonStandardCount = 0;
-                var geometryStopwatch = System.Diagnostics.Stopwatch.StartNew();
-
-                LoggerService.LogTransaction("PLUGIN", "PrepareGeometry: geometry explode loop started.");
-                while (passCount < maxPasses)
-                {
-                    passCount++;
-                    int currentNonStandardCount = 0;
-                    var passStopwatch = System.Diagnostics.Stopwatch.StartNew();
-                    try
-                    {
-                        // FIX: Clear and reselect instead of Add/Delete every pass
-                        ssetReuse.Clear();
-                        ssetReuse.Select(5, Type.Missing, Type.Missing, wType, wData);
-                        currentNonStandardCount = ssetReuse.Count;
-
-                        LoggerService.LogTransaction("PLUGIN", $"PrepareGeometry: pass {passCount} start (non-standard: {currentNonStandardCount}, previous: {previousNonStandardCount}, identicalLoops: {identicalCountLoops}).");
-
-                        if (currentNonStandardCount > 0)
-                        {
-                            finalNonStandardCount = currentNonStandardCount;
-
-                            if (currentNonStandardCount == previousNonStandardCount)
-                            {
-                                identicalCountLoops++;
-                                if (identicalCountLoops >= 2)
-                                {
-                                    LoggerService.LogTransaction("PLUGIN", $"PrepareGeometry: pass {passCount} breaking due to identical non-standard count >= 2 ({currentNonStandardCount} entities unexplodable).");
-                                    break; // Unexplodable remainder
-                                }
-                            }
-                            else
-                            {
-                                identicalCountLoops = 0;
-                            }
-
-                            previousNonStandardCount = currentNonStandardCount;
-
-                            SendCommandSafe(doc, "\x03\x03");
-                            SendCommandSafe(doc, $"(if (setq ss (ssget \"_X\" {whitelistFilter})) (command \"_.EXPLODE\" ss \"\"))\n");
-
-                            // FIX: Adaptive sleep — scale with entity count, capped between 200ms–800ms
-                            int adaptiveSleep = Math.Min(800, Math.Max(200, currentNonStandardCount / 5));
-                            System.Threading.Thread.Sleep(adaptiveSleep);
-                        }
-                        else
-                        {
-                            LoggerService.LogTransaction("PLUGIN", $"PrepareGeometry: pass {passCount} found no non-standard objects; exiting.");
-                            break; // Perfect geometry achieved
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        LoggerService.LogTransaction("PLUGIN", $"PrepareGeometry: pass {passCount} caught exception: {ex.Message}");
-                        break;
-                    }
-                    finally
-                    {
-                        passStopwatch.Stop();
-                        LoggerService.LogTransaction("PLUGIN", $"PrepareGeometry: pass {passCount} duration {passStopwatch.ElapsedMilliseconds}ms.");
-                    }
-
-                    if (geometryStopwatch.Elapsed.TotalSeconds > 120)
-                    {
-                        LoggerService.LogTransaction("PLUGIN", $"PrepareGeometry: elapsed {geometryStopwatch.Elapsed.TotalSeconds:F1}s exceeded 120s, aborting.");
-                        break;
-                    }
-                }
-                LoggerService.LogTransaction("PLUGIN", $"PrepareGeometry: geometry explode loop ended after {passCount} passes, elapsed {geometryStopwatch.Elapsed.TotalSeconds:F1}s.");
-                geometryStopwatch.Stop();
-
-                try { ssetReuse.Delete(); } catch { }
-
-                // 2c. ERASE unresolvable structures
-                // FIX: Removed the redundant first (setvar "QAFLAGS" 0) that was here before ERASE
-                // It was triggering a premature regen while the command queue was still processing EXPLODE
-                SendCommandSafe(doc, "\x03\x03");
-                SendCommandSafe(doc, $"(if (setq ss (ssget \"_X\" {whitelistFilter})) (command \"_.ERASE\" ss \"\"))\n");
-
-                // FIX: Single ERASE wait — only 500ms since REGENMODE is suppressed
-                System.Threading.Thread.Sleep(500);
-
-                // ─── Restore display settings ───
-                LoggerService.LogTransaction("PLUGIN", "PrepareGeometry: restoring regen and cmdecho before QAFLAGS.");
                 SendCommandSafe(doc, "(setvar \"REGENMODE\" 1)\n");
-                SendCommandSafe(doc, "(setvar \"CMDECHO\" 1)\n");
-
-                // FIX: ONE QAFLAGS call — at the very end, after BricsCAD has finished all queued work
-                LoggerService.LogTransaction("PLUGIN", "PrepareGeometry: issuing final QAFLAGS reset.");
                 SendCommandSafe(doc, "(setvar \"QAFLAGS\" 0)\n");
 
-                string unexplodableNote = finalNonStandardCount > 0
-                    ? $" WARNING: {finalNonStandardCount} entities could not be exploded after {passCount} passes and were erased (likely locked, xref-attached, or dynamic blocks). Review the drawing for missing geometry."
+                LoggerService.LogTransaction("PLUGIN", $"PrepareGeometry: done — {passCount} passes, {remaining} remaining before hard erase.");
+
+                string unexplodableNote = remaining > 0
+                    ? $" WARNING: {remaining} entities could not be exploded after {passCount} passes and were erased (likely locked, xref-attached, or dynamic blocks). Review the drawing for missing geometry."
                     : " All complex entities were successfully exploded.";
                 return $"Geometry Prepared Natively: Executed {passCount} global wipe cycles.{unexplodableNote}";
             }

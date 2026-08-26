@@ -6,8 +6,10 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows.Input;
+using System.Windows.Media.Imaging;
 using BricsAI.Core;
 using BricsAI.Overlay.Models;
 using BricsAI.Overlay.Services.Agents;
@@ -53,12 +55,35 @@ namespace BricsAI.Overlay.ViewModels
         public ICommand GenerateSummaryCommand { get; }
         public ICommand ExplodeGeometryCommand { get; }
 
+        // Layer snapshot popup
+        public ICommand ShowLayerSnapshotCommand { get; }
+        public ICommand ClosePopupCommand { get; }
+
+        private bool _isPopupVisible;
+        public bool IsPopupVisible { get => _isPopupVisible; set { _isPopupVisible = value; OnPropertyChanged(); } }
+
+        private bool _isPopupLoading;
+        public bool IsPopupLoading { get => _isPopupLoading; set { _isPopupLoading = value; OnPropertyChanged(); } }
+
+        private string _popupLayerName = "";
+        public string PopupLayerName { get => _popupLayerName; set { _popupLayerName = value; OnPropertyChanged(); } }
+
+        private BitmapImage? _popupImage;
+        public BitmapImage? PopupImage { get => _popupImage; set { _popupImage = value; OnPropertyChanged(); OnPropertyChanged(nameof(HasPopupImage)); } }
+        public bool HasPopupImage => _popupImage != null;
+
+        private string? _popupStatusText;
+        public string? PopupStatusText { get => _popupStatusText; set { _popupStatusText = value; OnPropertyChanged(); OnPropertyChanged(nameof(HasPopupStatusText)); } }
+        public bool HasPopupStatusText => !string.IsNullOrEmpty(_popupStatusText);
+
         private readonly Services.ComClient _comClient; // Replaced PipeClient
         private readonly SurveyorAgent _surveyor;
         private readonly ExecutorAgent _executor;
         private readonly ValidatorAgent _validator;
         private readonly MapperAgent _mapper;
         private readonly MappingReviewAgent _mappingReviewAgent;
+
+        private string _lastActiveDocumentPath = "";
 
         private string _pendingMappingCommands = "";
         private string _originalProofingCommand = "";
@@ -89,14 +114,126 @@ namespace BricsAI.Overlay.ViewModels
             CleanGeometryCommand = new RelayCommand(async _ => await ExecuteQuickAction("Clean up the drawing geometry. Delete floating layers, standard garbage layers (like dim/freeze), and run PURGE on everything."));
             GenerateSummaryCommand = new RelayCommand(async _ => await ExecuteQuickAction("I don't need macros run. Please just look at the Surveyor data and generate a Bill of Materials / Audit Summary for this layout."));
             ExplodeGeometryCommand = new RelayCommand(async _ => await ExecuteQuickAction("__EXPLODE_WITH_BOOTH_LOCK__ Unlock all layers, lock booth output layers, then iteratively explode all complex entities."));
+
+            ClosePopupCommand = new RelayCommand(_ =>
+            {
+                IsPopupVisible = false;
+                PopupImage = null;
+                PopupStatusText = null;
+                IsPopupLoading = false;
+                return Task.CompletedTask;
+            });
+            ShowLayerSnapshotCommand = new RelayCommand(async param =>
+            {
+                if (param is MappingRow row) await ShowLayerSnapshotAsync(row);
+            });
             
             // Initial greeting
             Messages.Add(new ChatMessage { Role = "Assistant", Content = "Hello! I am your BricsCAD AI Agent. connecting via COM Automation... (No NETLOAD needed)" });
         }
 
+        private void ResetSessionState(string reason)
+        {
+            _pendingMappingCommands = "";
+            _originalProofingCommand = "";
+            _lastKnownMappings = "";
+            _isInTableMappingReview = false;
+            _mappingQueue = new List<(string, string)>();
+            _includedIndexes = new HashSet<int>();
+            _excludedIndexes = new HashSet<int>();
+            _mappingReasons = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            _mappingConfidence = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            _mappingSnapshotPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            OnPropertyChanged(nameof(IsQuickActionsEnabled));
+
+            Messages.Add(new ChatMessage
+            {
+                Role = "Assistant",
+                Content = $"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🔄 {reason} — session state cleared for this drawing.\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            });
+            BricsAI.Core.LoggerService.LogTransaction("OVERLAY", $"ResetSessionState: {reason}");
+        }
+
+        private async Task ShowLayerSnapshotAsync(MappingRow row)
+        {
+            PopupLayerName = row.SourceLayer;
+            PopupImage = null;
+            PopupStatusText = null;
+            IsPopupLoading = true;
+            IsPopupVisible = true;
+
+            string? filePath = row.SnapshotPath;
+
+            // Export on demand if no cached snapshot exists
+            if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
+            {
+                try
+                {
+                    if (!_comClient.IsConnected) await _comClient.ConnectAsync();
+                    string escapedLayer = row.SourceLayer.Replace("\\", "\\\\").Replace("\"", "\\\"");
+                    string exportAction = $@"{{ ""tool_calls"": [{{ ""command_name"": ""EXPORT_LAYER_SNAPSHOT"", ""lisp_code"": ""NET:EXPORT_LAYER_SNAPSHOT:{escapedLayer}|BMP"" }}] }}";
+                    IProgress<string> noop = new Progress<string>(_ => { });
+                    string exportResult = await Task.Run(() => _comClient.ExecuteActionAsync(exportAction, noop));
+
+                    // ExecuteActionAsync wraps plugin output as "Step 1: {json}" — extract just the JSON object
+                    int jsonStart = exportResult.IndexOf('{');
+                    if (jsonStart >= 0)
+                    {
+                        using var jsonDoc = JsonDocument.Parse(exportResult.Substring(jsonStart));
+                        if (jsonDoc.RootElement.TryGetProperty("FilePath", out var fpElem))
+                        {
+                            filePath = fpElem.GetString();
+                            if (!string.IsNullOrEmpty(filePath))
+                                row.SnapshotPath = filePath; // Cache so next click is instant
+                        }
+                    }
+                    else
+                    {
+                        // Plain error from plugin — surface it
+                        throw new Exception(exportResult.Replace("Step 1: ", "").Trim());
+                    }
+                }
+                catch (Exception ex)
+                {
+                    IsPopupLoading = false;
+                    PopupStatusText = $"Export failed: {ex.Message}";
+                    LoggerService.LogTransaction("OVERLAY", $"ShowLayerSnapshot export error for '{row.SourceLayer}': {ex.Message}");
+                    return;
+                }
+            }
+
+            IsPopupLoading = false;
+
+            if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
+            {
+                PopupStatusText = "No snapshot could be generated. Make sure BricsCAD is open with a drawing loaded.";
+                return;
+            }
+
+            try
+            {
+                using var stream = File.OpenRead(filePath);
+                var img = new BitmapImage();
+                img.BeginInit();
+                img.CacheOption = BitmapCacheOption.OnLoad;
+                img.StreamSource = stream;
+                img.EndInit();
+                img.Freeze();
+                PopupImage = img;
+            }
+            catch (Exception ex)
+            {
+                PopupStatusText = $"Could not load image: {ex.Message}";
+            }
+        }
+
         private async Task ExecuteQuickAction(string overridePrompt)
         {
             if (IsBusy) return;
+            // A button press is explicit user intent to start a fresh operation.
+            // If we were mid-review for a previous drawing, clear that stale state now.
+            if (_isInTableMappingReview)
+                ResetSessionState("New action requested while mapping review was in progress");
             string originalInput = InputText;
             InputText = overridePrompt;
             await SendMessageAsync();
@@ -109,9 +246,24 @@ namespace BricsAI.Overlay.ViewModels
 
             var userMessage = InputText;
             InputText = ""; // Clear input immediately
-            
+
             Messages.Add(new ChatMessage { Role = "User", Content = userMessage });
             BricsAI.Core.LoggerService.LogUserMessage(userMessage);
+
+            // Detect drawing changes and reset stale session state so a new proofing run
+            // on a different file never inherits mappings or review state from the previous one.
+            if (_comClient.IsConnected)
+            {
+                string currentDocPath = _comClient.GetActiveDocumentPath();
+                if (!string.IsNullOrEmpty(currentDocPath) &&
+                    !string.IsNullOrEmpty(_lastActiveDocumentPath) &&
+                    !string.Equals(currentDocPath, _lastActiveDocumentPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    ResetSessionState($"Drawing changed from '{System.IO.Path.GetFileName(_lastActiveDocumentPath)}' to '{System.IO.Path.GetFileName(currentDocPath)}'");
+                }
+                if (!string.IsNullOrEmpty(currentDocPath))
+                    _lastActiveDocumentPath = currentDocPath;
+            }
 
             try
             {
@@ -351,18 +503,26 @@ namespace BricsAI.Overlay.ViewModels
                                     userMessage.Contains("standard garbage layers", StringComparison.OrdinalIgnoreCase);
             if (isCleanupCommand && _comClient.IsConnected)
             {
-                var cleanupMsg = new ChatMessage { Role = "Assistant", Content = "🧹 Running cleanup: deleting Deleted_ layers and purging drawing...", IsThinking = true };
+                var cleanupMsg = new ChatMessage { Role = "Assistant", Content = "🧹 Running cleanup: renaming non-standard layers, deleting all non-standard layers, and purging...", IsThinking = true };
                 Messages.Add(cleanupMsg);
                 IProgress<string> cleanupProgress = new Progress<string>(update => { cleanupMsg.Content += $"\n{update}"; });
                 var cleanupStopwatch = Stopwatch.StartNew();
 
                 try
                 {
-                    LoggerService.LogTransaction("PLUGIN", "MainViewModel: Cleanup fastpath — starting DELETE_LAYERS_BY_PREFIX:Deleted_.");
+                    // Step 1: Rename every non-standard layer (not in the A2Z allow list) to Deleted_ prefix.
+                    // This catches layers that were never processed by the proofing step.
+                    LoggerService.LogTransaction("PLUGIN", "MainViewModel: Cleanup fastpath — step 1: RENAME_DELETED_LAYERS.");
+                    string renameAction = @"{ ""tool_calls"": [{ ""command_name"": ""RENAME_DELETED_LAYERS"", ""lisp_code"": ""NET:RENAME_DELETED_LAYERS"" }] }";
+                    string renameResult = await Task.Run(() => _comClient.ExecuteActionAsync(renameAction, cleanupProgress));
+
+                    // Step 2: Delete all Deleted_ layers (now includes everything non-standard).
+                    LoggerService.LogTransaction("PLUGIN", "MainViewModel: Cleanup fastpath — step 2: DELETE_LAYERS_BY_PREFIX:Deleted_.");
                     string deleteAction = @"{ ""tool_calls"": [{ ""command_name"": ""DELETE_LAYERS_BY_PREFIX"", ""lisp_code"": ""NET:DELETE_LAYERS_BY_PREFIX:Deleted_"" }] }";
                     string deleteResult = await Task.Run(() => _comClient.ExecuteActionAsync(deleteAction, cleanupProgress));
 
-                    LoggerService.LogTransaction("PLUGIN", "MainViewModel: Cleanup fastpath — running PURGE.");
+                    // Step 3: Final purge.
+                    LoggerService.LogTransaction("PLUGIN", "MainViewModel: Cleanup fastpath — step 3: PURGE.");
                     string purgeAction = @"{ ""tool_calls"": [{ ""command_name"": ""PURGE"", ""lisp_code"": ""(command \""-PURGE\"" \""All\"" \""*\"" \""N\"")""  }] }";
                     string purgeResult = await Task.Run(() => _comClient.ExecuteActionAsync(purgeAction, cleanupProgress));
 
@@ -370,8 +530,8 @@ namespace BricsAI.Overlay.ViewModels
                     double cleanupSeconds = Math.Round(cleanupStopwatch.Elapsed.TotalSeconds, 1);
 
                     cleanupMsg.IsThinking = false;
-                    cleanupMsg.Content = $"✅ Cleanup complete.\n\n{deleteResult}\n{purgeResult}";
-                    LoggerService.LogTransaction("PLUGIN", $"MainViewModel: Cleanup fastpath done. {deleteResult}");
+                    cleanupMsg.Content = $"✅ Cleanup complete.\n\n{renameResult}\n{deleteResult}\n{purgeResult}";
+                    LoggerService.LogTransaction("PLUGIN", $"MainViewModel: Cleanup fastpath done. {renameResult} | {deleteResult}");
 
                     Messages.Add(new ChatMessage { Role = "Assistant", Content = $"📊 Performance: 0 API tokens consumed (cleanup runs natively via COM — no AI calls needed). Task completed in {cleanupSeconds} seconds." });
                 }
@@ -484,6 +644,10 @@ namespace BricsAI.Overlay.ViewModels
             int totalInputTokens = 0;
             int totalOutputTokens = 0;
             var stopwatch = Stopwatch.StartNew();
+
+            string _dwgFile = _comClient.IsConnected ? System.IO.Path.GetFileName(_comClient.GetActiveDocumentPath()) : "(unknown)";
+            if (string.IsNullOrWhiteSpace(_dwgFile)) _dwgFile = "(unknown)";
+            BricsAI.Core.LoggerService.LogTransaction("SESSION", $"Proofing started | File: {_dwgFile} | Prompt: {userMessage.Replace(Environment.NewLine, " ")}");
 
             // Agent 1: Surveyor
             var surveyorMsg = new ChatMessage { Role = "Assistant", Content = "👷‍♂️ Surveyor Agent: Putting on my hard hat and inspecting the raw drawing layers...", IsThinking = true };
@@ -923,12 +1087,15 @@ namespace BricsAI.Overlay.ViewModels
             double seconds = Math.Round(stopwatch.Elapsed.TotalSeconds, 1);
             Messages.Add(new ChatMessage { Role = "Assistant", Content = $"📊 Performance: {totalTokens} API tokens consumed ({totalInputTokens} Input, {totalOutputTokens} Output). Task completed in {seconds} seconds." });
 
+            BricsAI.Core.LoggerService.LogTransaction("SESSION",
+                $"Proofing complete | File: {_dwgFile} | Tokens: {totalTokens} total ({totalInputTokens} input, {totalOutputTokens} output) | Duration: {seconds}s");
+
             try
             {
                 var logPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "chat_debug_log.txt");
                 System.Text.StringBuilder sb = new System.Text.StringBuilder();
                 foreach (var msg in Messages) sb.AppendLine($"[{msg.Role}]: {msg.Content}");
-                System.IO.File.WriteAllText(logPath, sb.ToString());
+                System.IO.File.AppendAllText(logPath, $"\n\n--- Run: {DateTime.Now:yyyy-MM-dd HH:mm:ss} | {_dwgFile} ---\n" + sb.ToString());
             }
             catch { }
 

@@ -99,8 +99,14 @@ namespace BricsAI.McpServer.Tools
         public static Task<string> LearnLayerMapping(
             ComClient comClient, StaComHost sta,
             [Description("The non-standard vendor layer name.")] string sourceLayer,
-            [Description("The standard A2Z target layer name, e.g. Expo_Building.")] string targetLayer)
-            => ToolExec.RunAsync(comClient, sta, $"NET:LEARN_LAYER_MAPPING:{sourceLayer}:{targetLayer}");
+            [Description("The standard A2Z target layer name, e.g. Expo_Building. Must NOT be a booth output layer (Expo_BoothOutline, Expo_BoothNumber, Expo_MaxBoothOutline, Expo_MaxBoothNumber).")] string targetLayer)
+        {
+            var protectedBooths = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase)
+                { "Expo_BoothOutline", "Expo_BoothNumber", "Expo_MaxBoothOutline", "Expo_MaxBoothNumber" };
+            if (protectedBooths.Contains(targetLayer))
+                return System.Threading.Tasks.Task.FromResult($"Rejected: '{targetLayer}' is a protected booth output layer and cannot be used as a mapping target. Choose a different standard layer.");
+            return ToolExec.RunAsync(comClient, sta, $"NET:LEARN_LAYER_MAPPING:{sourceLayer}:{targetLayer}");
+        }
 
         [McpServerTool(Name = "isolate_layers"), Description("Hides all layers except the listed ones (plus layer 0).")]
         public static Task<string> IsolateLayers(

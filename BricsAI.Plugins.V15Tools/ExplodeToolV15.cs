@@ -67,143 +67,18 @@ namespace BricsAI.Plugins.V15Tools
         {
             try
             {
-                var boothLayers = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase)
-                {
-                    "Expo_BoothOutline", "Expo_BoothNumber", "Expo_MaxBoothOutline", "Expo_MaxBoothNumber"
-                };
+                // Cast to object before calling the helper so the return type stays statically typed
+                // (any method call that receives a dynamic argument is itself inferred as dynamic).
+                object docObj = doc;
+                ExplodeHelper.UnlockNonBoothLayers(docObj);
+                ExplodeHelper.LockBoothLayers(docObj);
 
-                // Step 1: Unlock all non-booth, non-frozen layers so explode can reach everything
-                var layers = doc?.Layers;
-                if (layers != null)
-                {
-                    for (int i = 0; i < layers.Count; i++)
-                    {
-                        try
-                        {
-                            var lyr = layers.Item(i);
-                            if (boothLayers.Contains((string)lyr.Name)) continue;
-                            if ((bool)lyr.Freeze) continue;
-                            lyr.Lock = false;
-                        }
-                        catch { }
-                    }
-                }
-
-                // Step 2: Lock the four booth output layers
-                try { doc.Layers.Item("Expo_BoothNumber").Lock = true; } catch { }
-                try { doc.Layers.Item("Expo_BoothOutline").Lock = true; } catch { }
-                try { doc.Layers.Item("Expo_MaxBoothNumber").Lock = true; } catch { }
-                try { doc.Layers.Item("Expo_MaxBoothOutline").Lock = true; } catch { }
-
-                doc.SendCommand("(setvar \"PICKFIRST\" 1)\n");
-                doc.SendCommand("(setvar \"CMDECHO\" 0)\n");
-                doc.SendCommand("(setvar \"QATOL\" 0.001)\n");
-
-                // Step 3a: Erase POINT entities — they cannot be exploded and have no use in final geometry
-                doc.SendCommand("\x03\x03");
-                doc.SendCommand("(if (setq ss (ssget \"_X\" '((0 . \"POINT\")))) (command \"_.ERASE\" ss \"\"))\n");
-                System.Threading.Thread.Sleep(200);
-
-                // Step 3b: Erase 3DFACE entities — EXPLODE silently fails on them; only deletion works
-                doc.SendCommand("\x03\x03");
-                doc.SendCommand("(if (setq ss (ssget \"_X\" '((0 . \"3DFACE\")))) (command \"_.ERASE\" ss \"\"))\n");
-                System.Threading.Thread.Sleep(200);
-
-                // Step 3c: Flatten splines — EXPLODE cannot handle them; FLATTEN converts to polylines
-                string splineSsetName = "BA_EBL_Spline_" + System.Guid.NewGuid().ToString("N").Substring(0, 8);
-                var splineSset = doc.SelectionSets.Add(splineSsetName);
-                try
-                {
-                    splineSset.Select(5, Type.Missing, Type.Missing, new short[] { 0 }, new object[] { "SPLINE" });
-                    if (splineSset.Count > 0)
-                    {
-                        doc.SendCommand("\x03\x03");
-                        doc.SendCommand("(setvar \"QAFLAGS\" 1)\n");
-                        doc.SendCommand("(if (setq ss (ssget \"_X\" '((0 . \"SPLINE\")))) (sssetfirst nil ss))\n");
-                        doc.SendCommand("FLATTEN\n\n\n");
-                        doc.SendCommand("(setvar \"QAFLAGS\" 0)\n");
-                        System.Threading.Thread.Sleep(500);
-                    }
-                }
-                finally
-                {
-                    try { splineSset.Delete(); } catch { }
-                }
-
-                // Step 4: Iterative explode loop — all non-whitelist types, up to 30 passes / 120 seconds
-                short[] wType = new short[] { -4, -4, 0, 0, 0, 0, 0, 0, 0, -4, -4 };
-                object[] wData = new object[] { "<NOT", "<OR", "ARC", "LINE", "CIRCLE", "ELLIPSE", "LWPOLYLINE", "TEXT", "SOLID", "OR>", "NOT>" };
-                string whitelistLisp = "(if (setq ss (ssget \"_X\" '((-4 . \"<NOT\") (-4 . \"<OR\") (0 . \"ARC\") (0 . \"LINE\") (0 . \"CIRCLE\") (0 . \"ELLIPSE\") (0 . \"LWPOLYLINE\") (0 . \"TEXT\") (0 . \"SOLID\") (-4 . \"OR>\") (-4 . \"NOT>\")))) (sssetfirst nil ss))\n";
-
-                int maxPasses = 30;
-                int passCount = 0;
-                int totalReduced = 0;
-                int previousCount = -1;
-                int stuckPasses = 0;
-                var sw = System.Diagnostics.Stopwatch.StartNew();
-
-                string ssetName = "BA_EBL_Reuse";
-                dynamic? sset = null;
-                try { sset = doc.SelectionSets.Item(ssetName); sset.Delete(); } catch { }
-                sset = doc.SelectionSets.Add(ssetName);
-
-                while (passCount < maxPasses && sw.Elapsed.TotalSeconds < 120)
-                {
-                    passCount++;
-                    sset.Clear();
-                    sset.Select(5, Type.Missing, Type.Missing, wType, wData);
-                    int countBefore = sset.Count;
-
-                    if (countBefore == 0) break;
-
-                    if (countBefore == previousCount)
-                    {
-                        stuckPasses++;
-                        if (stuckPasses >= 3) break; // No progress for 3 consecutive passes
-                    }
-                    else
-                    {
-                        stuckPasses = 0;
-                    }
-                    previousCount = countBefore;
-
-                    doc.SendCommand("(setvar \"QAFLAGS\" 1)\n");
-                    doc.SendCommand(whitelistLisp);
-                    doc.SendCommand("_.EXPLODE\n");
-                    doc.SendCommand("(setvar \"QAFLAGS\" 0)\n");
-
-                    int sleepMs = System.Math.Min(800, System.Math.Max(200, countBefore / 10));
-                    System.Threading.Thread.Sleep(sleepMs);
-
-                    sset.Clear();
-                    sset.Select(5, Type.Missing, Type.Missing, wType, wData);
-                    totalReduced += countBefore - sset.Count;
-                }
-
-                try { sset.Delete(); } catch { }
-
-                // Count remaining non-standard entities (informational — no erase)
-                int remaining = 0;
-                string countName = "BA_EBL_Count";
-                dynamic? countSset = null;
-                try
-                {
-                    try { countSset = doc.SelectionSets.Item(countName); countSset.Delete(); } catch { }
-                    countSset = doc.SelectionSets.Add(countName);
-                    countSset.Select(5, Type.Missing, Type.Missing, wType, wData);
-                    remaining = countSset.Count;
-                }
-                finally
-                {
-                    try { countSset?.Delete(); } catch { }
-                }
-
-                doc.SendCommand("(setvar \"CMDECHO\" 1)\n");
+                var (passCount, totalReduced, remaining) = ExplodeHelper.Run(docObj);
 
                 string suffix = remaining > 0
                     ? $"{remaining} non-standard entities remain (unexplodable — locked, xref-attached, or dynamic blocks)."
                     : "All non-standard entities resolved.";
-                return $"Explode with booth lock complete: {passCount} passes, {totalReduced} entities exploded. {suffix}";
+                return $"Explode with booth lock complete: {passCount} passes, {totalReduced} entities reduced. {suffix}";
             }
             catch (System.Exception ex)
             {

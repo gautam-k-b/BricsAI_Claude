@@ -21,6 +21,16 @@ namespace BricsAI.Core
         private static readonly Regex _mappingRegex =
             new(@"Map the layer '(.*?)' to standard layer '(.*?)'\.", RegexOptions.Compiled);
 
+        // These four layers are the protected booth output layers. No vendor layer may ever be
+        // mapped to them — they are populated exclusively by the proofing workflow itself.
+        // Any attempt to save such a mapping is silently rejected to prevent accidental overwrite.
+        private static readonly HashSet<string> _protectedTargets =
+            new(StringComparer.OrdinalIgnoreCase)
+            {
+                "Expo_BoothOutline", "Expo_BoothNumber",
+                "Expo_MaxBoothOutline", "Expo_MaxBoothNumber"
+            };
+
         private static readonly object _initLock = new();
         private static bool _initialized;
         private static string _dbPath = "";
@@ -115,7 +125,16 @@ namespace BricsAI.Core
                 var match = _mappingRegex.Match(rule);
                 if (match.Success)
                 {
-                    UpsertMapping(conn, match.Groups[1].Value.Trim(), match.Groups[2].Value.Trim(), timestamp);
+                    string src = match.Groups[1].Value.Trim();
+                    string tgt = match.Groups[2].Value.Trim();
+                    if (_protectedTargets.Contains(tgt))
+                    {
+                        // Booth output layers are populated by the proofing workflow only.
+                        // Silently drop any attempt to learn a vendor mapping to them.
+                        LoggerService.LogTransaction("KNOWLEDGE", $"SaveLearning: REJECTED mapping '{src}' -> '{tgt}' — booth output layers are protected.");
+                        return;
+                    }
+                    UpsertMapping(conn, src, tgt, timestamp);
                 }
                 else
                 {
