@@ -278,16 +278,10 @@ namespace BricsAI.Plugins.V19Tools
                         throw;
                 }
 
-                var result = new
-                {
-                    Layer = request.Layer,
-                    RequestedFormat = request.Format,
-                    FormatUsed = Path.GetExtension(filePath).TrimStart('.').ToUpperInvariant(),
-                    EntityCount = (int)sset.Count,
-                    FilePath = filePath
-                };
-
-                return JsonSerializer.Serialize(result);
+                string formatUsed = Path.GetExtension(filePath).TrimStart('.').ToUpperInvariant();
+                int entityCount = (int)sset.Count;
+                string escapedPath = filePath.Replace("\\", "\\\\");
+                return $"{{\"Layer\":\"{request.Layer}\",\"RequestedFormat\":\"{request.Format}\",\"FormatUsed\":\"{formatUsed}\",\"EntityCount\":{entityCount},\"FilePath\":\"{escapedPath}\"}}";
             }
             catch (Exception ex)
             {
