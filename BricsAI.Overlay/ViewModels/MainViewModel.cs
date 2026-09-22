@@ -84,6 +84,7 @@ namespace BricsAI.Overlay.ViewModels
         private readonly MappingReviewAgent _mappingReviewAgent;
 
         private string _lastActiveDocumentPath = "";
+        private bool _geometryAlreadyPrepared = false; // true once pre-survey explode ran for this session
 
         private string _pendingMappingCommands = "";
         private string _originalProofingCommand = "";
@@ -138,6 +139,8 @@ namespace BricsAI.Overlay.ViewModels
             _originalProofingCommand = "";
             _lastKnownMappings = "";
             _isInTableMappingReview = false;
+            _geometryAlreadyPrepared = false;
+            _comClient.GeometryAlreadyPrepared = false;
             _mappingQueue = new List<(string, string)>();
             _includedIndexes = new HashSet<int>();
             _excludedIndexes = new HashSet<int>();
@@ -603,6 +606,39 @@ namespace BricsAI.Overlay.ViewModels
                 LoggerService.LogTransaction("PLUGIN", "MainViewModel: Force unlocking all layers except booth output layers.");
                 await Task.Run(() => _comClient.ForceUnlockAllLayersExceptBoothLayersSynchronously());
                 LoggerService.LogTransaction("PLUGIN", "MainViewModel: Layer unlock stage complete.");
+            }
+
+            // --- PRE-SURVEY EXPLODE ---
+            // XRef-bound and block geometry lives on collapsed/merged layers (e.g. a single "XRef" layer)
+            // until the entities are exploded. Surveying before exploding means the AI proposes mappings
+            // based on incomplete layer data and then misses the real per-object layers revealed post-explode.
+            // Fix: explode first, then survey the full expanded layer set.
+            bool isProofingLike = cleanUserMessageEarly.Contains("proof", StringComparison.OrdinalIgnoreCase) ||
+                                  cleanUserMessageEarly.Contains("standardize", StringComparison.OrdinalIgnoreCase);
+            if (isProofingLike && !skipMappingReviewEarly && !_geometryAlreadyPrepared && _comClient.IsConnected)
+            {
+                var preSurveyMsg = new ChatMessage
+                {
+                    Role = "Assistant",
+                    Content = "💥 **Pre-Analysis Explode** — Exploding XRef/block geometry first so all real layers are visible before surveying...",
+                    IsThinking = true
+                };
+                Messages.Add(preSurveyMsg);
+                IProgress<string> preSurveyProgress = new Progress<string>(update => { preSurveyMsg.Content += $"\n{update}"; });
+
+                LoggerService.LogTransaction("PLUGIN", "MainViewModel: Pre-survey explode — locking booth layers then PREPARE_GEOMETRY.");
+                string lockAction = @"{ ""tool_calls"": [{ ""command_name"": ""LOCK_BOOTH_LAYERS"", ""lisp_code"": ""NET:LOCK_BOOTH_LAYERS"" }] }";
+                string prepAction = @"{ ""tool_calls"": [{ ""command_name"": ""PREPARE_GEOMETRY"",  ""lisp_code"": ""NET:PREPARE_GEOMETRY"" }] }";
+
+                await Task.Run(() => _comClient.ExecuteActionAsync(lockAction, preSurveyProgress));
+                string preSurveyResult = await Task.Run(() => _comClient.ExecuteActionAsync(prepAction, preSurveyProgress));
+
+                preSurveyMsg.IsThinking = false;
+                preSurveyMsg.Content = $"✅ Geometry exploded — all layers now expanded for analysis.\n{preSurveyResult}";
+
+                _geometryAlreadyPrepared = true;
+                _comClient.GeometryAlreadyPrepared = true;
+                LoggerService.LogTransaction("PLUGIN", $"MainViewModel: Pre-survey explode done. {preSurveyResult}");
             }
 
             // Pass 1: Survey Layers (Two-Pass Logic)

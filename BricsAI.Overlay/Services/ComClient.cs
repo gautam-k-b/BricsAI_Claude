@@ -43,6 +43,12 @@ namespace BricsAI.Overlay.Services
 
         public int MajorVersion { get; private set; }
 
+        /// <summary>
+        /// Set to true by MainViewModel after a pre-survey explode so that
+        /// RunFullProofingSequence skips the PREPARE_GEOMETRY step (already done).
+        /// </summary>
+        public bool GeometryAlreadyPrepared { get; set; } = false;
+
         public async Task<bool> ConnectAsync()
         {
             return await Task.Run(() =>
@@ -148,7 +154,11 @@ namespace BricsAI.Overlay.Services
             log.Add($"Step {step++} [Unlock]: Unlocked all layers except protected booth layers.");
 
             RunStep("Lock Booth Layers", () => RunNetCommand("NET:LOCK_BOOTH_LAYERS"));
-            RunStep("Prepare Geometry", () => RunNetCommand("NET:PREPARE_GEOMETRY"));
+
+            if (GeometryAlreadyPrepared)
+                log.Add($"Step {step++} [Prepare Geometry]: Skipped — geometry was exploded before layer analysis.");
+            else
+                RunStep("Prepare Geometry", () => RunNetCommand("NET:PREPARE_GEOMETRY"));
             RunStep("Apply Layer Mappings", () => RunNetCommand("NET:APPLY_LAYER_MAPPINGS"));
             RunStep("Apply Standard Colors", () => RunRawCommand("(c:a2zcolor)"));
             RunStep("Purge", () => RunRawCommand("(command \"-PURGE\" \"All\" \"*\" \"N\")"));

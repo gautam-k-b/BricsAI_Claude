@@ -5,6 +5,7 @@
     <TargetFramework>net9.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <UseWPF>true</UseWPF>
+    <ApplicationIcon>app.ico</ApplicationIcon>
     <Version>3.3.0</Version>
     <AssemblyVersion>3.3.0.0</AssemblyVersion>
     <FileVersion>3.3.0.0</FileVersion>
@@ -14,6 +15,7 @@
     <None Update="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Update="app.ico" />
   </ItemGroup>
 
   <ItemGroup>
