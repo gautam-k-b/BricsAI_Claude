@@ -588,7 +588,7 @@ namespace BricsAI.Plugins.V15Tools
         {
             try
             {
-                var mappings = KnowledgeService.GetLayerMappingsDictionary();
+                var mappings = KnowledgeService.GetLayerMappingsForApply();
                 if (mappings == null || mappings.Count == 0)
                     return "Error: No layer mappings strictly learned yet.";
 

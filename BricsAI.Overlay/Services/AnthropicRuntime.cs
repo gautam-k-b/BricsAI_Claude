@@ -67,6 +67,44 @@ namespace BricsAI.Overlay.Services
                 && !string.Equals(apiKey, "YOUR_ANTHROPIC_API_KEY_HERE", StringComparison.OrdinalIgnoreCase);
         }
 
+        internal const string NoApiKeyMessage =
+            "No Anthropic API key is configured. Open appsettings.json (next to the application), set Anthropic:ApiKey to a valid key, and restart the app.";
+
+        /// <summary>Turns an SDK/network exception into a short, actionable message for the user.</summary>
+        internal static string DescribeFailure(Exception ex)
+        {
+            string text = ex.ToString();
+            if (text.Contains("401") || text.Contains("authentication_error", StringComparison.OrdinalIgnoreCase) || text.Contains("invalid x-api-key", StringComparison.OrdinalIgnoreCase))
+                return "The Anthropic API key was rejected (invalid or revoked). Update Anthropic:ApiKey in appsettings.json and restart the app.";
+            if (text.Contains("403") || text.Contains("permission_error", StringComparison.OrdinalIgnoreCase))
+                return "The Anthropic API key does not have permission to use this model. Check the key and the Model setting in appsettings.json.";
+            if (text.Contains("404") || text.Contains("not_found", StringComparison.OrdinalIgnoreCase))
+                return "The configured model or API URL was not found. Check Anthropic:Model and Anthropic:ApiUrl in appsettings.json.";
+            if (text.Contains("429") || text.Contains("rate_limit", StringComparison.OrdinalIgnoreCase))
+                return "The Anthropic API rate limit or quota was reached. Wait a moment and try again, or check your plan/billing.";
+            if (text.Contains("overloaded", StringComparison.OrdinalIgnoreCase) || text.Contains("529") || text.Contains("500") || text.Contains("503"))
+                return "The Anthropic service is temporarily unavailable. Please try again shortly.";
+            if (ex is System.Net.Http.HttpRequestException || ex is TaskCanceledException || ex is System.Net.Sockets.SocketException)
+                return "Could not reach the Anthropic API (network, proxy or firewall problem). Check your internet connection and the ApiUrl setting.";
+            return "The AI service returned an error: " + ex.Message;
+        }
+
+        /// <summary>Verifies the LLM is reachable with the configured key. Returns null if OK, otherwise the reason.</summary>
+        internal static async Task<string?> CheckConnectivityAsync()
+        {
+            var configuration = LoadConfiguration();
+            if (!IsApiKeyConfigured(configuration.ApiKey)) return NoApiKeyMessage;
+            try
+            {
+                await SendMessageAsync(configuration, "Reply with the single word OK.", "ping");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return DescribeFailure(ex);
+            }
+        }
+
         internal static async Task<(string Content, int TotalTokens, int InputTokens, int OutputTokens)> SendMessageAsync(
             ProviderConfiguration configuration,
             string systemPrompt,

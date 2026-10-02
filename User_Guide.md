@@ -181,7 +181,7 @@ This is the main button. It runs the full sequence:
 3. Shows you a **review table** (see below) so you can confirm or adjust before anything changes.
 4. After you confirm, applies the layer mappings, cleans geometry, and validates the result.
 
-Use this at the start of every job.
+Use this at the start of every job. This is the only action that shows the review table.
 
 ---
 
@@ -222,7 +222,34 @@ Use this when someone asks "what's in this drawing?" without wanting to proof it
 
 ## The Mapping Review Table
 
-When you click **Run Full AI Proofing**, after the AI has classified all the layers, a table appears in the chat like this:
+The review table appears **only when you run Full AI Proofing** (the button, or typing a clear request such as "proof this drawing"). No other button or command shows it. A message like "don't proof this yet" is understood as a *no* and does nothing to the drawing.
+
+Every layer in the drawing is listed, so nothing is moved silently:
+
+- **New layers** - the AI proposes a target.
+- **Layers already learned** - shown with the learned target pre-selected, High confidence and the reason "Previously learned from knowledge base".
+
+These are **not** listed: frozen layers, layers `0` and `Defpoints`, the four booth output layers (`Expo_BoothOutline`, `Expo_BoothNumber`, `Expo_MaxBoothOutline`, `Expo_MaxBoothNumber`) and the other standard `Expo_` layers.
+
+```
+[x] # | Source Layer | Target Layer (drop-down) | Confidence | Reason | Status
+[ ] 1 | A-WALL       | Expo_Building      v     | High       | ...    | pending
+[ ] 2 | MISC_STUFF   | None               v     | Low        | ...    | pending
+```
+
+### Using the table
+
+- **Checkbox on each row** - tick the rows you want mapped. The checkbox in the header selects or clears every row; tick it first, then untick what you do not want. A counter beside the buttons shows "N of M selected".
+- **Target Layer drop-down on each row** - pre-selected to what the AI (or your earlier learning) suggested. Change it if it is wrong. Choices: `None`, `Expo_Building`, `Expo_Column`, `Expo_View2`, `Expo_Markings`, `Expo_NES`, `Expo_ImageMarkings`.
+- **`None`** - do not map this layer. Its checkbox is disabled and any previously learned mapping for it is removed.
+- **Apply selected & proceed** - maps the ticked rows to the targets shown and starts proofing. **Cancel** stops the review.
+- Only the rows you approve are remapped. A learned mapping for a layer you left unticked, or set to `None`, is **not** applied to the drawing.
+- Layers you do not map are renamed `Deleted_...` and removed by the normal clean-up, as before.
+- Only the newest table is live; earlier tables are greyed out.
+
+You can also work by typing instead of using the checkboxes (below). Typed commands use any drop-down changes you have already made.
+
+A typical table looks like this:
 
 ```
 #  | Source Layer      | Target Layer        | Confidence | Action
@@ -246,6 +273,7 @@ When you click **Run Full AI Proofing**, after the AI has classified all the lay
 | `confirm` / `yes` / `looks good` | Confirms whatever is decided and starts proofing |
 | `confirm all` | Includes every row and starts proofing immediately |
 | `remember A-WALL always maps to Expo_Building` | Saves this as a permanent rule; review stays open |
+| `Map XYZ_LAYER to Expo_View2` | Saves the rule **and** changes that row in the table (included); the table is redrawn |
 | `stop` / `cancel` | Cancels — nothing is changed in the drawing |
 
 **Tip:** The safest default for a first run is to type `process high confidence only` then `confirm`. High-confidence rows are almost always correct. You can deal with low-confidence layers manually afterwards.
@@ -400,6 +428,8 @@ No. The .NET runtime is installed on your machine independently of the app. Just
 | 📊 Performance: 0 API tokens | This step ran natively — no AI cost |
 | 📊 Performance: N tokens (X input, Y output) | The AI was used; shows actual token consumption |
 | ━━━ divider line ━━━ | Session was reset (new drawing detected, or a button was pressed while a review was open) |
+| ✅ Connected to the AI service | Checked at startup - the API key and connection work |
+| 🔌 AI service not available / Cannot reach the AI service | The AI could not be used (missing or rejected key, network, quota). **Nothing was processed.** The message says what to fix |
 
 ---
 
@@ -415,7 +445,7 @@ If the app starts but says it cannot find previous mappings, the `agent_knowledg
 
 ### AI proofing fails with "authentication" or "API key" error
 
-Open `appsettings.json` (next to the exe), check that `"ApiKey"` is filled in correctly, save the file, and restart the Overlay.
+The Overlay checks the connection when it starts and tells you immediately ("🔌 AI service not available") with the reason. If a key is missing or rejected, open `appsettings.json` (next to the exe), check that `"ApiKey"` is filled in correctly, save the file, and restart the Overlay. While the AI is unavailable the app does not process anything.
 
 ### Claude cannot act on the drawing
 

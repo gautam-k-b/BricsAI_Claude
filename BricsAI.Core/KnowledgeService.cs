@@ -147,6 +147,26 @@ namespace BricsAI.Core
             }
         }
 
+        /// <summary>
+        /// Removes any learned mapping for a source layer (used when the reviewer picks "None").
+        /// </summary>
+        public static void RemoveMapping(string sourceLayer)
+        {
+            try
+            {
+                using var conn = OpenConnection();
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = "DELETE FROM layer_mappings WHERE source_layer = $src;";
+                cmd.Parameters.AddWithValue("$src", sourceLayer);
+                int n = cmd.ExecuteNonQuery();
+                if (n > 0) LoggerService.LogTransaction("KNOWLEDGE", $"RemoveMapping: deleted learned mapping for '{sourceLayer}'.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error removing mapping: {ex.Message}");
+            }
+        }
+
         // ── Read ─────────────────────────────────────────────────────────────────
         /// <summary>
         /// Returns the full knowledge base as text — every layer mapping and free-form rule,
@@ -239,6 +259,30 @@ namespace BricsAI.Core
             }
             catch { }
             return dict;
+        }
+
+        // ── Review-scoped apply filter ───────────────────────────────────────────
+        // When set, APPLY_LAYER_MAPPINGS may only remap the source layers the reviewer approved in the
+        // mapping table. Without it every learned mapping in the DB is applied to every matching layer
+        // in the drawing, including ones the reviewer unticked or set to None.
+        private static HashSet<string>? _applyFilter;
+
+        public static void SetApplyFilter(IEnumerable<string> approvedSourceLayers) =>
+            _applyFilter = new HashSet<string>(approvedSourceLayers, StringComparer.OrdinalIgnoreCase);
+
+        public static void ClearApplyFilter() => _applyFilter = null;
+
+        /// <summary>Learned mappings to apply to the drawing, restricted to the reviewed set when a filter is active.</summary>
+        public static Dictionary<string, string> GetLayerMappingsForApply()
+        {
+            var all = GetLayerMappingsDictionary();
+            var filter = _applyFilter;
+            if (filter == null) return all;
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var kvp in all)
+                if (filter.Contains(kvp.Key)) result[kvp.Key] = kvp.Value;
+            LoggerService.LogTransaction("KNOWLEDGE", $"GetLayerMappingsForApply: review filter active — {result.Count} of {all.Count} learned mappings approved for this run.");
+            return result;
         }
 
         // ── Maintenance ──────────────────────────────────────────────────────────

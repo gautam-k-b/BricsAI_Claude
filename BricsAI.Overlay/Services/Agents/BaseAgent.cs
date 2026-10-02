@@ -6,10 +6,19 @@ using BricsAI.Overlay.Services;
 
 namespace BricsAI.Overlay.Services.Agents
 {
+    /// <summary>
+    /// Raised when the LLM cannot be reached or rejects the request (bad key, network, quota...).
+    /// Callers must stop the workflow — proceeding without the LLM produces garbage results.
+    /// </summary>
+    public sealed class LlmUnavailableException : Exception
+    {
+        public LlmUnavailableException(string message, Exception? inner = null) : base(message, inner) { }
+    }
+
     public abstract class BaseAgent
     {
         private readonly AnthropicRuntime.ProviderConfiguration _providerConfiguration;
-        
+
         public string Name { get; protected set; } = "BaseAgent";
 
         public BaseAgent()
@@ -20,11 +29,7 @@ namespace BricsAI.Overlay.Services.Agents
         protected async Task<(string Content, int TotalTokens, int InputTokens, int OutputTokens)> CallModelAsync(string systemPrompt, string userPrompt, bool expectJson = false)
         {
             if (!AnthropicRuntime.IsApiKeyConfigured(_providerConfiguration.ApiKey))
-            {
-                return (expectJson
-                    ? $@"{{ ""tool_calls"": [{{ ""command_name"": ""NET:MESSAGE: Please configure your Anthropic API Key."", ""lisp_code"": """" }}] }}"
-                    : "Error: Please configure your Anthropic API Key.", 0, 0, 0);
-            }
+                throw new LlmUnavailableException(AnthropicRuntime.NoApiKeyMessage);
 
             try
             {
@@ -35,12 +40,8 @@ namespace BricsAI.Overlay.Services.Agents
             }
             catch (Exception ex)
             {
-                string fullError = ex.ToString().Replace("\"", "'").Replace("\\", "/");
-                string safeMsg = ex.Message.Replace("\"", "'").Replace("\\", "/");
-                System.IO.File.WriteAllText("AI_Error.txt", fullError);
-                return (expectJson
-                    ? $@"{{ ""error"": true, ""tool_calls"": [], ""message"": ""{safeMsg}"" }}"
-                    : $"Agent {Name} Error: {safeMsg}", 0, 0, 0);
+                try { System.IO.File.WriteAllText("AI_Error.txt", ex.ToString()); } catch { }
+                throw new LlmUnavailableException(AnthropicRuntime.DescribeFailure(ex), ex);
             }
         }
 
@@ -48,11 +49,7 @@ namespace BricsAI.Overlay.Services.Agents
             string systemPrompt, string userPrompt, IReadOnlyList<string> imagePaths, bool expectJson = false)
         {
             if (!AnthropicRuntime.IsApiKeyConfigured(_providerConfiguration.ApiKey))
-            {
-                return (expectJson
-                    ? $@"{{ ""tool_calls"": [{{ ""command_name"": ""NET:MESSAGE: Please configure your Anthropic API Key."", ""lisp_code"": """" }}] }}"
-                    : "Error: Please configure your Anthropic API Key.", 0, 0, 0);
-            }
+                throw new LlmUnavailableException(AnthropicRuntime.NoApiKeyMessage);
 
             try
             {
@@ -62,12 +59,8 @@ namespace BricsAI.Overlay.Services.Agents
             }
             catch (Exception ex)
             {
-                string fullError = ex.ToString().Replace("\"", "'").Replace("\\", "/");
-                string safeMsg = ex.Message.Replace("\"", "'").Replace("\\", "/");
-                System.IO.File.WriteAllText("AI_Error.txt", fullError);
-                return (expectJson
-                    ? $@"{{ ""error"": true, ""tool_calls"": [], ""message"": ""{safeMsg}"" }}"
-                    : $"Agent {Name} Error: {safeMsg}", 0, 0, 0);
+                try { System.IO.File.WriteAllText("AI_Error.txt", ex.ToString()); } catch { }
+                throw new LlmUnavailableException(AnthropicRuntime.DescribeFailure(ex), ex);
             }
         }
     }

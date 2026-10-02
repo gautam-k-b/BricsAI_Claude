@@ -215,6 +215,15 @@ Real API calls still happen (mock mode only replaces the BricsCAD COM layer), so
 7. Optionally export layer snapshots for visual review
 8. Optionally run clean_deleted_layers only on explicit approval
 
+## BricsAI.Overlay Behaviour (v3.9.0)
+
+- **LLM connection is mandatory.** `BaseAgent` throws `LlmUnavailableException` for a missing/invalid key, network failure, rate limit or bad model (messages built in `AnthropicRuntime.DescribeFailure`). The view model stops the run and reports the reason; it never continues with empty or guessed AI output. A connectivity check also runs at startup.
+- **Intent gate.** Typed messages go through `IntentAgent` (one LLM call) which returns `FULL_PROOFING`, `CAD_TASK` or `CHAT`. Chat (greetings, small talk, unrelated or negated requests such as "don't proof this yet") is answered in the chat pane without touching BricsCAD. Quick-action buttons and the resume-after-review call skip the gate; the Run Full AI Proofing button always counts as full proofing.
+- **Mapping review grid is proofing-only.** It appears only for `FULL_PROOFING`. It lists every non-frozen layer except `0`, `Defpoints`, the four booth layers and the other standard `Expo_` layers, including layers that already have a learned mapping (pre-selected, High confidence).
+- **Grid controls.** Per-row checkbox (header = select all), per-row Target Layer drop-down (`None`, `Expo_Building`, `Expo_Column`, `Expo_View2`, `Expo_Markings`, `Expo_NES`, `Expo_ImageMarkings`; the AI suggestion is pre-selected), **Apply selected & proceed** / **Cancel** buttons. Typed include/exclude/confirm/cancel/remember commands still work.
+- **Review-scoped apply.** After the review, `KnowledgeService.SetApplyFilter` limits `NET:APPLY_LAYER_MAPPINGS` (via `GetLayerMappingsForApply`) to the approved rows, so learned mappings for unticked / `None` layers are not applied silently. `None` also deletes the stored mapping (`KnowledgeService.RemoveMapping`).
+- **"Map X to Y" during review** updates the pending row as well as the knowledge base.
+
 ## Frozen Layer Handling
 
 Frozen layers are treated as fully hands-off across both apps:
@@ -244,5 +253,7 @@ dotnet build BricsAI.sln
 - Restart Claude MCP session after rebuilding binaries
 
 ### BricsAI.Overlay: agent responses look empty or proofing does nothing
+
+If the AI service is unreachable the Overlay now says so explicitly ("Cannot reach the AI service") instead of continuing; check `Anthropic:ApiKey` / `Model` / `ApiUrl` in `appsettings.json` next to the exe (the copy in `bin` is the one read at run time).
 
 Make sure you're on a build that includes the `AnthropicRuntime` response-parsing fix (v3.5.0+) — earlier builds silently discarded every Claude response due to an SDK content-block extraction bug, while still consuming real API tokens.

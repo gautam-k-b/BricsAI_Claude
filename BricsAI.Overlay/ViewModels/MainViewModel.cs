@@ -55,6 +55,10 @@ namespace BricsAI.Overlay.ViewModels
         public ICommand GenerateSummaryCommand { get; }
         public ICommand ExplodeGeometryCommand { get; }
 
+        // Mapping-review table buttons
+        public ICommand ApplySelectionCommand { get; }
+        public ICommand CancelReviewCommand { get; }
+
         // Layer snapshot popup
         public ICommand ShowLayerSnapshotCommand { get; }
         public ICommand ClosePopupCommand { get; }
@@ -82,6 +86,9 @@ namespace BricsAI.Overlay.ViewModels
         private readonly ValidatorAgent _validator;
         private readonly MapperAgent _mapper;
         private readonly MappingReviewAgent _mappingReviewAgent;
+        private readonly IntentAgent _intentAgent = new IntentAgent();
+        private bool _isQuickActionRun = false;
+        private const string ProofingButtonPrompt = "Please proof this drawing for an exhibition context. Follow the standard A2Z layering, exploding, and layout rules.";
 
         private string _lastActiveDocumentPath = "";
         private bool _geometryAlreadyPrepared = false; // true once pre-survey explode ran for this session
@@ -111,10 +118,17 @@ namespace BricsAI.Overlay.ViewModels
             _mappingReviewAgent = new MappingReviewAgent();
 
             SendCommand = new RelayCommand(async _ => await SendMessageAsync());
-            RunProofingCommand = new RelayCommand(async _ => await ExecuteQuickAction("Please proof this drawing for an exhibition context. Follow the standard A2Z layering, exploding, and layout rules."));
+            RunProofingCommand = new RelayCommand(async _ => await ExecuteQuickAction(ProofingButtonPrompt));
             CleanGeometryCommand = new RelayCommand(async _ => await ExecuteQuickAction("Clean up the drawing geometry. Delete floating layers, standard garbage layers (like dim/freeze), and run PURGE on everything."));
             GenerateSummaryCommand = new RelayCommand(async _ => await ExecuteQuickAction("I don't need macros run. Please just look at the Surveyor data and generate a Bill of Materials / Audit Summary for this layout."));
             ExplodeGeometryCommand = new RelayCommand(async _ => await ExecuteQuickAction("__EXPLODE_WITH_BOOTH_LOCK__ Unlock all layers, lock booth output layers, then iteratively explode all complex entities."));
+
+            ApplySelectionCommand = new RelayCommand(_ => { ApplyTableSelection(); return Task.CompletedTask; });
+            CancelReviewCommand = new RelayCommand(_ =>
+            {
+                if (!IsBusy && _isInTableMappingReview) AbortMappingReview();
+                return Task.CompletedTask;
+            });
 
             ClosePopupCommand = new RelayCommand(_ =>
             {
@@ -131,6 +145,22 @@ namespace BricsAI.Overlay.ViewModels
             
             // Initial greeting
             Messages.Add(new ChatMessage { Role = "Assistant", Content = "Hello! I am your BricsCAD AI Agent. connecting via COM Automation... (No NETLOAD needed)" });
+
+            _ = CheckLlmConnectionAsync();
+        }
+
+        /// <summary>Startup check so a bad/missing API key is reported immediately, not silently ignored.</summary>
+        private async Task CheckLlmConnectionAsync()
+        {
+            string? problem = await Task.Run(() => Services.AnthropicRuntime.CheckConnectivityAsync());
+            Messages.Add(new ChatMessage
+            {
+                Role = "Assistant",
+                Content = problem == null
+                    ? "✅ Connected to the AI service."
+                    : $"🔌 **AI service not available — I can't process drawings until this is fixed.**\n{problem}"
+            });
+            LoggerService.LogTransaction("OVERLAY", problem == null ? "LLM connectivity OK" : $"LLM connectivity FAILED: {problem}");
         }
 
         private void ResetSessionState(string reason)
@@ -239,7 +269,9 @@ namespace BricsAI.Overlay.ViewModels
                 ResetSessionState("New action requested while mapping review was in progress");
             string originalInput = InputText;
             InputText = overridePrompt;
-            await SendMessageAsync();
+            _isQuickActionRun = true;
+            try { await SendMessageAsync(); }
+            finally { _isQuickActionRun = false; }
             InputText = originalInput; // Restore whatever they were typing
         }
 
@@ -249,6 +281,8 @@ namespace BricsAI.Overlay.ViewModels
 
             var userMessage = InputText;
             InputText = ""; // Clear input immediately
+            if (!userMessage.Contains("_skipMappingReviewSequence_"))
+                BricsAI.Core.KnowledgeService.ClearApplyFilter(); // a new request starts without a stale approval list
 
             Messages.Add(new ChatMessage { Role = "User", Content = userMessage });
             BricsAI.Core.LoggerService.LogUserMessage(userMessage);
@@ -274,10 +308,12 @@ namespace BricsAI.Overlay.ViewModels
                 if (_isInTableMappingReview && _mappingQueue.Count > 0)
                 {
                     IsBusy = true;
+                    SyncTargetsFromActiveTable(); // pick up any drop-down edits made in the table
 
                     var (reviewResponse, tokens, inputTokens, outputTokens) = await _mappingReviewAgent.ClassifyTableReviewResponseAsync(
                         userMessage, _mappingQueue, _mappingConfidence, _mappingReasons, _includedIndexes, _excludedIndexes);
 
+                    bool mappingRowChanged = false;
                     switch (reviewResponse.Intent)
                     {
                         case "INCLUDE":
@@ -348,8 +384,48 @@ namespace BricsAI.Overlay.ViewModels
                         {
                             if (!string.IsNullOrWhiteSpace(reviewResponse.RuleText))
                             {
+                                // "Map the layer 'X' to standard layer 'Y'." for a layer in this review must also change
+                                // the pending row — otherwise CompleteMappingReview would overwrite the memorised
+                                // mapping with the old AI suggestion still sitting in the queue.
+                                var ruleMatch = System.Text.RegularExpressions.Regex.Match(
+                                    reviewResponse.RuleText, @"Map the layer '(.*?)' to standard layer '(.*?)'\.");
+                                int rowIdx = -1;
+                                string newTarget = "";
+                                if (ruleMatch.Success)
+                                {
+                                    string src = ruleMatch.Groups[1].Value.Trim();
+                                    newTarget = ruleMatch.Groups[2].Value.Trim();
+                                    rowIdx = _mappingQueue.FindIndex(q => string.Equals(q.Source, src, StringComparison.OrdinalIgnoreCase));
+                                    var known = BricsAI.Overlay.Models.MappingRow.StandardTargets
+                                        .FirstOrDefault(t => string.Equals(t, newTarget, StringComparison.OrdinalIgnoreCase));
+                                    if (known != null) newTarget = known;
+                                }
+
                                 BricsAI.Core.KnowledgeService.SaveLearning(reviewResponse.RuleText);
-                                Messages.Add(new ChatMessage { Role = "Assistant", Content = $"🧠 Remembered: {reviewResponse.RuleText}\n\n📋 The mapping review is still open — continue deciding the remaining rows." });
+
+                                bool isBoothTarget = newTarget.StartsWith("Expo_", StringComparison.OrdinalIgnoreCase) &&
+                                    (newTarget.EndsWith("BoothOutline", StringComparison.OrdinalIgnoreCase) || newTarget.EndsWith("BoothNumber", StringComparison.OrdinalIgnoreCase));
+
+                                if (rowIdx >= 0 && !isBoothTarget)
+                                {
+                                    string srcName = _mappingQueue[rowIdx].Source;
+                                    _mappingQueue[rowIdx] = (srcName, newTarget);
+                                    _mappingReasons[srcName] = "Set by your instruction";
+                                    _mappingConfidence[srcName] = "High";
+                                    int row1 = rowIdx + 1;
+                                    _includedIndexes.Add(row1);
+                                    _excludedIndexes.Remove(row1);
+                                    Messages.Add(new ChatMessage { Role = "Assistant", Content = $"🧠 Remembered, and row {row1} ('{srcName}') now maps to {newTarget} and is included.\n\n📋 The mapping review is still open — continue deciding the remaining rows." });
+                                    mappingRowChanged = true;
+                                }
+                                else if (rowIdx >= 0)
+                                {
+                                    Messages.Add(new ChatMessage { Role = "Assistant", Content = $"⚠️ '{newTarget}' is a protected booth output layer — vendor layers cannot be mapped to it, so row {rowIdx + 1} was left unchanged." });
+                                }
+                                else
+                                {
+                                    Messages.Add(new ChatMessage { Role = "Assistant", Content = $"🧠 Remembered: {reviewResponse.RuleText}\n\n📋 The mapping review is still open — continue deciding the remaining rows." });
+                                }
                             }
                             break;
                         }
@@ -434,7 +510,8 @@ namespace BricsAI.Overlay.ViewModels
                         });
                     }
                     else if (reviewResponse.Intent == "INCLUDE" || reviewResponse.Intent == "EXCLUDE" ||
-                             reviewResponse.Intent == "INCLUDE_EXCLUDE" || reviewResponse.Intent == "HIGH_CONFIDENCE_ONLY")
+                             reviewResponse.Intent == "INCLUDE_EXCLUDE" || reviewResponse.Intent == "HIGH_CONFIDENCE_ONLY" ||
+                             mappingRowChanged)
                     {
                         Messages.Add(new ChatMessage { Role = "Assistant", Content = FormatMappingTable(), IsTableContent = true, MappingRows = BuildMappingRows() });
                     }
@@ -443,6 +520,30 @@ namespace BricsAI.Overlay.ViewModels
                     return;
                 }
 
+            // --- INTENT GATE: typed messages must be CAD work before any agent or drawing change runs ---
+            // Quick-action buttons and the internal resume-after-review call are explicit CAD intent and skip this.
+            // Everything else (e.g. "hi", "what's the weather") is answered in chat and never touches BricsCAD.
+            // Whether this run is the Full AI Proofing workflow. The button and the resume-after-review call are
+            // explicit; typed text is judged by the intent agent (so "don't proof this yet" is NOT proofing).
+            bool isFullProofing = userMessage.Contains("_skipMappingReviewSequence_") ||
+                                  (_isQuickActionRun && userMessage == ProofingButtonPrompt);
+            if (!_isQuickActionRun && !userMessage.Contains("_skipMappingReviewSequence_"))
+            {
+                IsBusy = true;
+                string recent = string.Join("\n", Messages
+                    .Where(m => !m.IsThinking && !m.IsTableContent)
+                    .Reverse().Skip(1).Take(4).Reverse()
+                    .Select(m => $"{m.Role}: {(m.Content.Length > 300 ? m.Content.Substring(0, 300) : m.Content)}"));
+                var (intent, chatReply) = await _intentAgent.ClassifyAsync(userMessage, recent);
+                isFullProofing = intent == IntentAgent.FullProofing;
+                if (intent == IntentAgent.Chat)
+                {
+                    Messages.Add(new ChatMessage { Role = "Assistant", Content = chatReply });
+                    IsBusy = false;
+                    return;
+                }
+            }
+
             // --- CONTEXT RECOVERY: Restore previous mapping suggestions if the last session failed ---
             // If the user re-prompts proofing and we have stored mappings from a previous failed attempt,
             // skip the expensive Surveyor+Mapper loop and resume straight from the known mappings.
@@ -450,10 +551,7 @@ namespace BricsAI.Overlay.ViewModels
             string cleanUserMessageEarly = userMessage.Replace("_skipMappingReviewSequence_", "").Trim();
             bool isProofingRetry = !skipMappingReviewEarly &&
                                    !string.IsNullOrEmpty(_lastKnownMappings) &&
-                                   (cleanUserMessageEarly.Contains("proof", StringComparison.OrdinalIgnoreCase) ||
-                                    cleanUserMessageEarly.Contains("map ", StringComparison.OrdinalIgnoreCase) ||
-                                    cleanUserMessageEarly.Contains("remap", StringComparison.OrdinalIgnoreCase) ||
-                                    cleanUserMessageEarly.Contains("standardize", StringComparison.OrdinalIgnoreCase));
+                                   isFullProofing;
 
             if (isProofingRetry)
             {
@@ -613,8 +711,7 @@ namespace BricsAI.Overlay.ViewModels
             // until the entities are exploded. Surveying before exploding means the AI proposes mappings
             // based on incomplete layer data and then misses the real per-object layers revealed post-explode.
             // Fix: explode first, then survey the full expanded layer set.
-            bool isProofingLike = cleanUserMessageEarly.Contains("proof", StringComparison.OrdinalIgnoreCase) ||
-                                  cleanUserMessageEarly.Contains("standardize", StringComparison.OrdinalIgnoreCase);
+            bool isProofingLike = isFullProofing;
             if (isProofingLike && !skipMappingReviewEarly && !_geometryAlreadyPrepared && _comClient.IsConnected)
             {
                 var preSurveyMsg = new ChatMessage
@@ -743,9 +840,13 @@ namespace BricsAI.Overlay.ViewModels
                                  cleanUserMessage.Contains("Audit Summary", StringComparison.OrdinalIgnoreCase) ||
                                  cleanUserMessage.Contains("I don't need macros run", StringComparison.OrdinalIgnoreCase);
 
-            // Trigger the mapper whenever unknown layers exist and the command is not a pure memory
-            // instruction or a read-only summary request.
-            if (unknownLayers.Any() && !skipMappingReview && !isMemoryInstruction && !isSummaryOnly)
+            // The mapping-review grid belongs to the Full AI Proofing workflow only. Other requests
+            // (delete a layer, hide layers, select columns, questions about the drawing...) never show it.
+            bool isProofingRequest = isFullProofing;
+
+            // Trigger the mapper for a proofing request when layers need review and the command is not a
+            // pure memory instruction or a read-only summary request.
+            if (isProofingRequest && unknownLayers.Any() && !skipMappingReview && !isMemoryInstruction && !isSummaryOnly)
             {
                 var mapperMsg = new ChatMessage { Role = "Assistant", Content = $"✨ Mapper Agent: Intercepting {unknownLayers.Count} unknown vendor layers...", IsThinking = true };
                 Messages.Add(mapperMsg);
@@ -867,12 +968,19 @@ namespace BricsAI.Overlay.ViewModels
                     .ToList();
 
                 // Store reasons and confidence keyed by source layer
+                _mappingReasons.Clear();
+                _mappingConfidence.Clear();
                 foreach (var m in allMappings)
                 {
                     if (!string.IsNullOrEmpty(m.Reason))
                         _mappingReasons[m.SourceLayer] = m.Reason;
                     _mappingConfidence[m.SourceLayer] = m.Confidence;
                 }
+
+                // Also list every layer that already has a learned mapping, pre-selected to that mapping, so
+                // nothing is moved silently: the reviewer sees (and can change or reject) every remap.
+                var learnedToolCalls = BuildLearnedToolCalls(cleanLayersPayload, standardA2zLayers, knownMappings, unknownLayers);
+                pendingToolCalls.AddRange(learnedToolCalls);
 
                 if (pendingToolCalls.Any())
                 {
@@ -895,7 +1003,7 @@ namespace BricsAI.Overlay.ViewModels
                         Messages.Add(new ChatMessage
                         {
                             Role = "Assistant",
-                            Content = $"🛑 **Human Review Required** — {_mappingQueue.Count} unknown layer(s) need mapping\n\n{FormatMappingTable()}",
+                            Content = $"🛑 **Human Review Required** — {_mappingQueue.Count} layer(s) to review ({unknownLayers.Count} new, {learnedToolCalls.Count} from knowledge base)\n{SkippedLayersNote}\n\n{FormatMappingTable()}",
                             IsTableContent = true,
                             MappingRows = BuildMappingRows()
                         });
@@ -922,6 +1030,7 @@ namespace BricsAI.Overlay.ViewModels
                             return $@"{{ ""command_name"": ""Semantic Mapping"", ""lisp_code"": ""NET:LEARN_LAYER_MAPPING:{s}:Deleted_"" }}";
                         })
                         .ToList();
+                    fallbackToolCalls.AddRange(BuildLearnedToolCalls(cleanLayersPayload, standardA2zLayers, knownMappings, unknownLayers));
 
                     _pendingMappingCommands = "{ \"tool_calls\": [\n" + string.Join(",\n", fallbackToolCalls) + "\n] }";
                     _lastKnownMappings = _pendingMappingCommands;
@@ -955,8 +1064,7 @@ namespace BricsAI.Overlay.ViewModels
             // --- TABULAR REVIEW FOR DB-KNOWN LAYERS ---
             // Mapper was skipped (all non-standard layers matched the DB). Show the same tabular
             // review so the user can confirm or adjust before any destructive proofing runs.
-            bool isProofingCommand = cleanUserMessage.Contains("proof", StringComparison.OrdinalIgnoreCase) ||
-                                     cleanUserMessage.Contains("standardize", StringComparison.OrdinalIgnoreCase);
+            bool isProofingCommand = isFullProofing;
             if (isProofingCommand && !skipMappingReview)
             {
                 var dbLayerNames = cleanLayersPayload
@@ -1119,6 +1227,7 @@ namespace BricsAI.Overlay.ViewModels
                 Messages.Add(new ChatMessage { Role = "Assistant", Content = "⚠️ System: Multi-Agent flow exhausted retries. Please refine your layer mappings or manually intervene.\n\n💡 Tip: If you'd like to retry with the previously suggested mappings, just send your proofing request again — I'll remember them." });
             }
 
+            BricsAI.Core.KnowledgeService.ClearApplyFilter();
             stopwatch.Stop();
             double seconds = Math.Round(stopwatch.Elapsed.TotalSeconds, 1);
             Messages.Add(new ChatMessage { Role = "Assistant", Content = $"📊 Performance: {totalTokens} API tokens consumed ({totalInputTokens} Input, {totalOutputTokens} Output). Task completed in {seconds} seconds." });
@@ -1137,6 +1246,13 @@ namespace BricsAI.Overlay.ViewModels
 
             IsBusy = false;
         }
+        catch (LlmUnavailableException ex)
+        {
+            // The AI is required for every step; stop instead of continuing with empty/guessed results.
+            Messages.Add(new ChatMessage { Role = "Assistant", Content = $"🔌 **Cannot reach the AI service — nothing was processed.**\n{ex.Message}" });
+            LoggerService.LogTransaction("OVERLAY", $"LLM unavailable: {ex.Message}");
+            IsBusy = false;
+        }
         catch (Exception ex)
         {
             Messages.Add(new ChatMessage { Role = "Assistant", Content = $"❌ A critical system error occurred during orchestration:\n{ex.Message}" });
@@ -1152,17 +1268,35 @@ namespace BricsAI.Overlay.ViewModels
 
         private void CompleteMappingReview()
         {
+            SyncTargetsFromActiveTable();
+            DeactivateTables();
+
             int acceptedCount = 0;
             for (int i = 1; i <= _mappingQueue.Count; i++)
             {
+                var (source, target) = _mappingQueue[i - 1];
+                if (string.Equals(target, BricsAI.Overlay.Models.MappingRow.NoneTarget, StringComparison.OrdinalIgnoreCase))
+                {
+                    // Reviewer chose "None": make sure no stale learned mapping survives for this layer.
+                    BricsAI.Core.KnowledgeService.RemoveMapping(source);
+                    continue;
+                }
                 if (_includedIndexes.Contains(i))
                 {
-                    var (source, target) = _mappingQueue[i - 1];
                     BricsAI.Core.KnowledgeService.SaveLearning($"Map the layer '{source}' to standard layer '{target}'.");
                     acceptedCount++;
                 }
             }
             int skippedCount = _mappingQueue.Count - acceptedCount;
+
+            // Only the approved rows may be remapped in the drawing; learned mappings the reviewer
+            // unticked or set to None must not be applied silently by APPLY_LAYER_MAPPINGS.
+            BricsAI.Core.KnowledgeService.SetApplyFilter(
+                Enumerable.Range(1, _mappingQueue.Count)
+                    .Where(i => _includedIndexes.Contains(i) &&
+                                !string.Equals(_mappingQueue[i - 1].Target, BricsAI.Overlay.Models.MappingRow.NoneTarget, StringComparison.OrdinalIgnoreCase))
+                    .Select(i => _mappingQueue[i - 1].Source)
+                    .ToList());
 
             _isInTableMappingReview = false;
             _mappingQueue.Clear();
@@ -1188,6 +1322,7 @@ namespace BricsAI.Overlay.ViewModels
 
         private void AbortMappingReview()
         {
+            DeactivateTables();
             _isInTableMappingReview = false;
             _mappingQueue.Clear();
             _mappingReasons.Clear();
@@ -1214,16 +1349,21 @@ namespace BricsAI.Overlay.ViewModels
         /// is now rendered by the XAML ItemsControl via BuildMappingRows().
         /// </summary>
         private string FormatMappingTable() =>
-            "Hover a layer name to preview its snapshot image. Hover a reason to read the full text.\n\n" +
-            "Reply with row numbers to include/exclude (e.g. \"include 1,3,5\" or \"exclude 2,4\"), " +
-            "say \"confirm all\" to accept everything pending, \"cancel\" to abort, " +
-            "or tell me a rule to remember at any point.";
+            "Tick the rows to map (header checkbox selects all), change any Target Layer from its drop-down " +
+            "(choose None to skip a layer), then press \"Apply selected & proceed\".\n" +
+            "Hover a layer name to preview its snapshot, or a reason to read it in full.\n\n" +
+            "You can also type instead: \"include 1,3,5\", \"exclude 2,4\", \"confirm all\", \"cancel\", " +
+            "or a rule to remember.";
 
         /// <summary>
         /// Builds the structured row list for the interactive mapping table in the UI.
         /// </summary>
         private List<BricsAI.Overlay.Models.MappingRow> BuildMappingRows()
         {
+            // A new table supersedes any earlier one: freeze the old one (carry its edits first).
+            SyncTargetsFromActiveTable();
+            DeactivateTables();
+
             var rows = new List<BricsAI.Overlay.Models.MappingRow>();
             for (int i = 0; i < _mappingQueue.Count; i++)
             {
@@ -1233,18 +1373,91 @@ namespace BricsAI.Overlay.ViewModels
                 string reason = _mappingReasons.TryGetValue(source, out var r) && !string.IsNullOrWhiteSpace(r) ? r : "—";
                 string status = _includedIndexes.Contains(idx) ? "included" : _excludedIndexes.Contains(idx) ? "excluded" : "pending";
                 _mappingSnapshotPaths.TryGetValue(source, out var snapshotPath);
-                rows.Add(new BricsAI.Overlay.Models.MappingRow
+                var row = new BricsAI.Overlay.Models.MappingRow
                 {
                     Index      = idx,
                     SourceLayer = source,
-                    TargetLayer = target,
                     Confidence  = confidence,
                     Reason      = reason,
-                    Status      = status,
                     SnapshotPath = snapshotPath
-                });
+                };
+                row.Init(target, _includedIndexes.Contains(idx), status);
+                rows.Add(row);
             }
             return rows;
+        }
+
+        private const string SkippedLayersNote =
+            "Not listed: frozen layers, layers 0 / Defpoints, the booth output layers (Expo_BoothOutline, Expo_BoothNumber, Expo_MaxBoothOutline, Expo_MaxBoothNumber) and the other standard Expo_ layers.";
+
+        /// <summary>
+        /// Builds review rows for layers in the drawing that already have a learned mapping (High confidence,
+        /// pre-selected to that mapping). Registers reason/confidence for each.
+        /// </summary>
+        private List<string> BuildLearnedToolCalls(string layersPayload, HashSet<string> standardLayers,
+            Dictionary<string, string> known, IEnumerable<string> alreadyListed)
+        {
+            var listed = new HashSet<string>(alreadyListed, StringComparer.OrdinalIgnoreCase);
+            var calls = new List<string>();
+            var layers = layersPayload
+                .Split(new[] { '\r', '\n', ',' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(l => l.Trim())
+                .Where(l => l.Length > 0 && !standardLayers.Contains(l) && !listed.Contains(l) && known.ContainsKey(l))
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+            foreach (var layer in layers)
+            {
+                _mappingReasons[layer] = "Previously learned from knowledge base";
+                _mappingConfidence[layer] = "High";
+                string src = layer.Replace("\\", "\\\\").Replace("\"", "\\\"");
+                string tgt = known[layer].Replace("\\", "\\\\").Replace("\"", "\\\"");
+                calls.Add($@"{{ ""command_name"": ""Semantic Mapping"", ""lisp_code"": ""NET:LEARN_LAYER_MAPPING:{src}:{tgt}"" }}");
+            }
+            return calls;
+        }
+
+        private ChatMessage? GetActiveTable() =>
+            Messages.LastOrDefault(m => m.HasMappingRows && m.IsActive);
+
+        private void DeactivateTables()
+        {
+            foreach (var m in Messages.Where(m => m.HasMappingRows && m.IsActive)) m.IsActive = false;
+        }
+
+        /// <summary>Copies target-layer drop-down choices from the live table back into the review queue.</summary>
+        private void SyncTargetsFromActiveTable()
+        {
+            var rows = GetActiveTable()?.MappingRows;
+            if (rows == null) return;
+            foreach (var row in rows)
+            {
+                int i = row.Index - 1;
+                if (i >= 0 && i < _mappingQueue.Count && _mappingQueue[i].Source == row.SourceLayer)
+                    _mappingQueue[i] = (_mappingQueue[i].Source, row.TargetLayer);
+            }
+        }
+
+        /// <summary>"Apply selected" button: checked rows (with a real target) are included, everything else excluded.</summary>
+        private void ApplyTableSelection()
+        {
+            if (IsBusy || !_isInTableMappingReview) return;
+            var table = GetActiveTable();
+            if (table?.MappingRows == null) return;
+
+            SyncTargetsFromActiveTable();
+            _includedIndexes.Clear();
+            _excludedIndexes.Clear();
+            foreach (var row in table.MappingRows)
+            {
+                if (row.IsSelected && row.IsMappable) _includedIndexes.Add(row.Index);
+                else _excludedIndexes.Add(row.Index);
+            }
+
+            if (_includedIndexes.Count == 0)
+            {
+                Messages.Add(new ChatMessage { Role = "Assistant", Content = "No rows are checked. Tick the rows you want mapped (or use the header checkbox to select all), then press **Apply selected**. Rows whose target is None are never mapped." });
+                return;
+            }
+            CompleteMappingReview();
         }
 
         private static string Truncate(string s, int max) => s.Length <= max ? s : s.Substring(0, max - 1) + "…";

@@ -192,14 +192,17 @@
                                             <!-- Column header row -->
                                             <Grid Margin="0,0,0,3">
                                                 <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="28"/>
+                                                    <ColumnDefinition Width="62"/>
                                                     <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="125"/>
+                                                    <ColumnDefinition Width="170"/>
                                                     <ColumnDefinition Width="70"/>
                                                     <ColumnDefinition Width="215"/>
                                                     <ColumnDefinition Width="70"/>
                                                 </Grid.ColumnDefinitions>
-                                                <TextBlock Grid.Column="0" Text="#"            Foreground="#00A8FF" FontWeight="SemiBold" FontSize="11" FontFamily="Consolas"/>
+                                                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                                                    <CheckBox IsChecked="{Binding AllSelected, Mode=TwoWay}" IsEnabled="{Binding IsActive}" VerticalAlignment="Center" Margin="0,0,6,0" ToolTip="Select / deselect all rows"/>
+                                                    <TextBlock Text="#" Foreground="#00A8FF" FontWeight="SemiBold" FontSize="11" FontFamily="Consolas" VerticalAlignment="Center"/>
+                                                </StackPanel>
                                                 <TextBlock Grid.Column="1" Text="Source Layer"  Foreground="#00A8FF" FontWeight="SemiBold" FontSize="11" FontFamily="Consolas"/>
                                                 <TextBlock Grid.Column="2" Text="Target Layer"  Foreground="#00A8FF" FontWeight="SemiBold" FontSize="11" FontFamily="Consolas"/>
                                                 <TextBlock Grid.Column="3" Text="Confidence"   Foreground="#00A8FF" FontWeight="SemiBold" FontSize="11" FontFamily="Consolas"/>
@@ -211,21 +214,23 @@
                                             <Border Height="1" Background="#444" Margin="0,0,0,3"/>
 
                                             <!-- Data rows -->
-                                            <ItemsControl ItemsSource="{Binding MappingRows}">
+                                            <ItemsControl ItemsSource="{Binding MappingRows}" IsEnabled="{Binding IsActive}">
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate>
                                                         <Grid Margin="0,2">
                                                             <Grid.ColumnDefinitions>
-                                                                <ColumnDefinition Width="28"/>
+                                                                <ColumnDefinition Width="62"/>
                                                                 <ColumnDefinition Width="*"/>
-                                                                <ColumnDefinition Width="125"/>
+                                                                <ColumnDefinition Width="170"/>
                                                                 <ColumnDefinition Width="70"/>
                                                                 <ColumnDefinition Width="215"/>
                                                                 <ColumnDefinition Width="70"/>
                                                             </Grid.ColumnDefinitions>
 
-                                                            <!-- Index — click to view layer snapshot -->
-                                                            <Button Grid.Column="0"
+                                                            <!-- Include checkbox + index (click index to view layer snapshot) -->
+                                                            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                                                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" IsEnabled="{Binding IsMappable}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                                            <Button
                                                                     Content="{Binding Index}"
                                                                     Command="{Binding DataContext.ShowLayerSnapshotCommand, ElementName=RootWindow}"
                                                                     CommandParameter="{Binding}"
@@ -244,6 +249,7 @@
                                                                     </Style>
                                                                 </Button.Style>
                                                             </Button>
+                                                            </StackPanel>
 
                                                             <!-- Source Layer — full name always visible; snapshot image on hover -->
                                                             <TextBlock Grid.Column="1" Text="{Binding SourceLayerDisplay}" Foreground="#EEE" FontSize="11" FontFamily="Consolas" TextWrapping="Wrap">
@@ -260,7 +266,10 @@
                                                             </TextBlock>
 
                                                             <!-- Target Layer -->
-                                                            <TextBlock Grid.Column="2" Text="{Binding TargetLayerDisplay}" Foreground="#EEE" FontSize="11" FontFamily="Consolas"/>
+                                                            <ComboBox Grid.Column="2" ItemsSource="{Binding TargetOptions}" SelectedItem="{Binding TargetLayer, Mode=TwoWay}"
+                                                                      FontSize="11" FontFamily="Consolas" Margin="0,0,6,0" Padding="4,1"
+                                                                      IsEnabled="{Binding DataContext.IsNotBusy, ElementName=RootWindow}"
+                                                                      ToolTip="Change the target layer, or choose None to skip mapping this layer"/>
 
                                                             <!-- Confidence — green for High, orange for Low -->
                                                             <TextBlock Grid.Column="3" Text="{Binding Confidence}" FontSize="11" FontFamily="Consolas">
@@ -305,6 +314,15 @@
                                                     </DataTemplate>
                                                 </ItemsControl.ItemTemplate>
                                             </ItemsControl>
+
+                                            <!-- Actions for the live table -->
+                                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0" IsEnabled="{Binding IsActive}">
+                                                <Button Content="✅ Apply selected &amp; proceed" Padding="12,4" Margin="0,0,8,0" Cursor="Hand"
+                                                        Command="{Binding DataContext.ApplySelectionCommand, ElementName=RootWindow}"/>
+                                                <Button Content="Cancel" Padding="12,4" Margin="0,0,12,0" Cursor="Hand"
+                                                        Command="{Binding DataContext.CancelReviewCommand, ElementName=RootWindow}"/>
+                                                <TextBlock Text="{Binding SelectionSummary}" Foreground="#AAA" FontSize="11" VerticalAlignment="Center"/>
+                                            </StackPanel>
                                         </StackPanel>
 
                                         <!-- Animated Thinking Dots -->
