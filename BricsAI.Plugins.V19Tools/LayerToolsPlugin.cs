@@ -661,7 +661,7 @@ namespace BricsAI.Plugins.V19Tools
                     "Expo_BoothNumber", "Expo_BoothOutline", 
                     "Expo_MaxBoothNumber", "Expo_MaxBoothOutline", 
                     "Expo_Building", "Expo_Column", 
-                    "Expo_Markings", "Expo_NES", "Expo_View2"
+                    "Expo_Markings", "Expo_NES", "Expo_View2", "Expo_ImageMarkings"
                 };
 
                 int renameCount = 0;

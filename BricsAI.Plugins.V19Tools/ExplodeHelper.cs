@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace BricsAI.Plugins.V19Tools
 {
@@ -13,8 +14,11 @@ namespace BricsAI.Plugins.V19Tools
     ///     that appear inside exploded blocks are always reachable on the next pass.
     ///   • Re-enforces booth-layer locks after each unlock sweep.
     ///   • No hard pass cap — runs until the time limit or until truly stuck.
-    ///   • Sets CLAYER = "0" before the loop so FLATTEN output lands on layer 0, then
-    ///     erases all entities on layer 0 at the end (the layer itself is kept).
+    ///   • Deletes ONLY what can never be useful: POINT and 3DFACE up front, and, once the loop
+    ///     has stalled, HATCH and ATTDEF entities that could not be exploded. Everything else that
+    ///     could not be exploded is LEFT IN THE DRAWING and reported by type; removing it is a
+    ///     separate, explicit user request (delete_non_standard_entities).
+    ///   • Never wipes layer 0 and never changes the current layer.
     /// </summary>
     internal static class ExplodeHelper
     {
@@ -80,8 +84,10 @@ namespace BricsAI.Plugins.V19Tools
         ///   (e.g. vendor source layers that map to booth targets).</param>
         /// <param name="timeLimitSeconds">Wall-clock budget (default 300 s).</param>
         /// <param name="stuckLimit">Consecutive no-progress passes before giving up (default 5).</param>
-        /// <returns>(passCount, totalReduced, remaining) tuple.</returns>
-        internal static (int passCount, int totalReduced, int remaining) Run(
+        /// <returns>(passCount, totalReduced, remaining, deletedSummary, remainingByType) — remaining is the
+        /// number of non-standard entities still in the drawing (never erased); deletedSummary lists the
+        /// POINT/3DFACE/HATCH/ATTDEF entities that were deleted; remainingByType is e.g. "BlockReference x3".</returns>
+        internal static (int passCount, int totalReduced, int remaining, string deletedSummary, string remainingByType) Run(
             object docObj,
             IEnumerable<string>? extraLockedLayers = null,
             int timeLimitSeconds = 300,
@@ -91,11 +97,11 @@ namespace BricsAI.Plugins.V19Tools
             doc.SendCommand("(setvar \"PICKFIRST\" 1)\n");
             doc.SendCommand("(setvar \"CMDECHO\" 0)\n");
             doc.SendCommand("(setvar \"QATOL\" 0.001)\n");
-            // Active layer = "0" so FLATTEN output and any intermediate geometry land on layer 0,
-            // which is erased at the end so junk does not accumulate in the final drawing.
-            doc.SendCommand("(setvar \"CLAYER\" \"0\")\n");
 
-            // ── Pre-clean: POINT and 3DFACE cannot be exploded ──────────────────────────
+            // ── Pre-clean: POINT and 3DFACE cannot be exploded and carry no useful geometry ──
+            var deleted = new Dictionary<string, int>();
+            deleted["POINT"] = CountByType(doc, "POINT");
+            deleted["3DFACE"] = CountByType(doc, "3DFACE");
             doc.SendCommand("\x03\x03");
             doc.SendCommand("(if (setq ss (ssget \"_X\" '((0 . \"POINT\")))) (command \"_.ERASE\" ss \"\"))\n");
             System.Threading.Thread.Sleep(200);
@@ -174,34 +180,14 @@ namespace BricsAI.Plugins.V19Tools
 
             try { sset!.Delete(); } catch { }
 
-            // ── Erase entities that accumulated on layer "0" during the run ─────────────
-            // SendCommand is fire-and-forget; use a COM-verified retry loop so we don't
-            // return before BricsCAD has finished the ERASE (including whitelisted types
-            // like LWPOLYLINEs created by FLATTEN that land on layer "0").
-            doc.SendCommand("\x03\x03");
-            doc.SendCommand("(if (setq ss (ssget \"_X\" '((8 . \"0\")))) (command \"_.ERASE\" ss \"\"))\n");
-            System.Threading.Thread.Sleep(600); // initial wait
-
-            for (int l0Retry = 0; l0Retry < 3; l0Retry++)
+            // ── Delete only HATCH / ATTDEF that the loop could not explode ──────────────
+            // Useless once they cannot be exploded any further. Deleted via COM (synchronous, so the
+            // counts below are reliable). Entities on locked layers (e.g. booth layers) throw and
+            // are left alone.
+            foreach (var type in new[] { "HATCH", "ATTDEF" })
             {
-                string l0Name = "BA_EH_L0";
-                dynamic? l0Sset = null;
-                int l0Count = 0;
-                try
-                {
-                    try { l0Sset = doc.SelectionSets.Item(l0Name); l0Sset!.Delete(); } catch { }
-                    l0Sset = doc.SelectionSets.Add(l0Name);
-                    l0Sset.Select(5, Type.Missing, Type.Missing, new short[] { 8 }, new object[] { "0" });
-                    l0Count = l0Sset.Count;
-                }
-                finally { try { l0Sset?.Delete(); } catch { } }
-
-                if (l0Count == 0) break; // confirmed empty — move on
-
-                // Entities still present; erase again and wait progressively longer.
-                doc.SendCommand("\x03\x03");
-                doc.SendCommand("(if (setq ss (ssget \"_X\" '((8 . \"0\")))) (command \"_.ERASE\" ss \"\"))\n");
-                System.Threading.Thread.Sleep(800 * (l0Retry + 1));
+                int n = DeleteByType(doc, type);
+                if (n > 0) deleted[type] = n;
             }
 
             // ── Count remaining non-standard entities for reporting ─────────────────────
@@ -217,9 +203,72 @@ namespace BricsAI.Plugins.V19Tools
             }
             finally { try { cntSset?.Delete(); } catch { } }
 
+            string remainingByType = remaining > 0 ? DescribeRemaining(doc) : "";
+
             doc.SendCommand("(setvar \"CMDECHO\" 1)\n");
 
-            return (passCount, totalReduced, remaining);
+            string deletedSummary = string.Join(", ", deleted.Where(kv => kv.Value > 0).Select(kv => $"{kv.Key} x{kv.Value}"));
+            return (passCount, totalReduced, remaining, deletedSummary, remainingByType);
+        }
+
+        private static int CountByType(dynamic doc, string dxfType)
+        {
+            string name = "BA_EH_C_" + Guid.NewGuid().ToString("N").Substring(0, 6);
+            dynamic? ss = null;
+            try
+            {
+                ss = doc.SelectionSets.Add(name);
+                ss.Select(5, Type.Missing, Type.Missing, new short[] { 0 }, new object[] { dxfType });
+                return (int)ss.Count;
+            }
+            catch { return 0; }
+            finally { try { ss?.Delete(); } catch { } }
+        }
+
+        /// <summary>Deletes every entity of the given DXF type via COM. Returns how many were deleted.</summary>
+        private static int DeleteByType(dynamic doc, string dxfType)
+        {
+            string name = "BA_EH_D_" + Guid.NewGuid().ToString("N").Substring(0, 6);
+            dynamic? ss = null;
+            int deleted = 0;
+            try
+            {
+                ss = doc.SelectionSets.Add(name);
+                ss.Select(5, Type.Missing, Type.Missing, new short[] { 0 }, new object[] { dxfType });
+                for (int i = (int)ss.Count - 1; i >= 0; i--)
+                {
+                    try { ss.Item(i).Delete(); deleted++; } catch { }
+                }
+            }
+            catch { }
+            finally { try { ss?.Delete(); } catch { } }
+            return deleted;
+        }
+
+        /// <summary>Groups the entities still left after the loop by ObjectName, e.g. "BlockReference x3, MText x1".</summary>
+        private static string DescribeRemaining(dynamic doc)
+        {
+            string name = "BA_EH_R_" + Guid.NewGuid().ToString("N").Substring(0, 6);
+            dynamic? ss = null;
+            try
+            {
+                ss = doc.SelectionSets.Add(name);
+                ss.Select(5, Type.Missing, Type.Missing, WTypes, WData);
+                var counts = new Dictionary<string, int>();
+                int n = Math.Min((int)ss.Count, 5000);
+                for (int i = 0; i < n; i++)
+                {
+                    try
+                    {
+                        string t = ((string)ss.Item(i).ObjectName).Replace("AcDb", "");
+                        counts[t] = counts.TryGetValue(t, out int c) ? c + 1 : 1;
+                    }
+                    catch { }
+                }
+                return string.Join(", ", counts.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Key} x{kv.Value}"));
+            }
+            catch { return ""; }
+            finally { try { ss?.Delete(); } catch { } }
         }
     }
 }

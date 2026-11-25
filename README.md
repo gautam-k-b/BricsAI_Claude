@@ -88,20 +88,24 @@ BricsAI.McpServer                     Surveyor -> Mapper -> MappingReview -> Exe
 - delete_non_standard_entities
 
 **Geometry preparation behaviour:**
-- POINT entities are deleted upfront before the explosion loop — they cannot be exploded and carry no useful geometry.
+- POINT and 3DFACE entities are deleted upfront before the explosion loop — they cannot be exploded and carry no useful geometry. HATCH and ATTDEF entities are deleted only if they are still present after the loop has stalled (i.e. they could not be exploded any further).
 - All other non-standard entity types (HATCH, unknown block types, etc.) are attempted for explosion each pass.
 - `explode_entities_by_type` counts entities before and after each attempt; if the count does not decrease, the type is skipped immediately instead of exhausting all retry passes.
-- After all passes, any entities that still could not be exploded are erased and a `WARNING:` note is included in the result. ValidatorAgent treats this as a partial failure and surfaces it to the user.
-- `prepare_geometry` returns `"All complex entities were successfully exploded."` on a clean run, or `"WARNING: N entities could not be exploded after N passes and were erased..."` when erasure occurred.
+- Any other entity that still could not be exploded is **left in the drawing** (never auto-erased) and reported by type in a `WARNING:` note. ValidatorAgent treats this as a partial failure and surfaces it to the user. Removing such leftovers is a separate, explicit request (`delete_non_standard_entities`).
+- Layer 0 is never wiped and the current layer (CLAYER) is not changed.
+- `prepare_geometry` returns `"All complex entities were successfully exploded."` on a clean run, or `"WARNING: N entities could not be exploded after N passes and were LEFT IN THE DRAWING (<types>)..."` when some remain.
 
 ### Proofing tools
 
-- run_full_proofing (BricsAI.Overlay's Executor agent triggers the same deterministic sequence via the `NET:RUN_FULL_PROOFING` pseudo-command instead of hand-assembling every step in its prompt)
+- run_full_proofing (optional skipPrepareGeometry=true after a pre-analysis explode_with_booth_lock; BricsAI.Overlay's Executor agent triggers the same deterministic sequence via the `NET:RUN_FULL_PROOFING` pseudo-command instead of hand-assembling every step in its prompt)
 - clean_deleted_layers
 
 ### Memory tools
 
 - get_learned_mappings
+- unlearn_layer_mapping (removes a learned mapping; MCP equivalent of "None" in the Overlay grid)
+- get_layers_for_review (complete review list: learned + new layers, nothing skipped)
+- set_mapping_review_filter / clear_mapping_review_filter (apply only the user-approved mappings)
 - get_unmapped_layers
 - learn_rule
 

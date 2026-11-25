@@ -73,11 +73,13 @@ namespace BricsAI.Plugins.V15Tools
                 ExplodeHelper.UnlockNonBoothLayers(docObj);
                 ExplodeHelper.LockBoothLayers(docObj);
 
-                var (passCount, totalReduced, remaining) = ExplodeHelper.Run(docObj);
+                var (passCount, totalReduced, remaining, deletedSummary, remainingByType) = ExplodeHelper.Run(docObj);
 
+                string deletedNote = string.IsNullOrEmpty(deletedSummary) ? "" : $" Deleted: {deletedSummary}.";
                 string suffix = remaining > 0
-                    ? $"{remaining} non-standard entities remain (unexplodable — locked, xref-attached, or dynamic blocks)."
+                    ? $"{remaining} non-standard entities remain and were kept ({remainingByType}) — unexplodable: locked, xref-attached, or dynamic blocks."
                     : "All non-standard entities resolved.";
+                suffix = deletedNote + " " + suffix;
                 return $"Explode with booth lock complete: {passCount} passes, {totalReduced} entities reduced. {suffix}";
             }
             catch (System.Exception ex)

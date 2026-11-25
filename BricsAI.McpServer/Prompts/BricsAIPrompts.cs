@@ -19,6 +19,7 @@ STANDARD A2Z TARGET LAYERS:
 - Expo_Building        -> Walls, columns, doors, stairs, railings
 - Expo_Column          -> Structural column markers
 - Expo_Markings        -> Annotations, dimensions, aisle labels, title blocks
+- Expo_ImageMarkings   -> Image-based markings
 - Expo_View2           -> Viewports, print-layout frames, utilities
 - Expo_NES             -> Non-exhibiting spaces (service areas, restrooms)
 - Defpoints            -> BricsCAD internal dimension points -- never modify
@@ -29,15 +30,26 @@ including case. 'Expo_BoothOutline MAX' is NOT Expo_BoothOutline. Treat anything
 or spacing as non-standard.
 
 BEFORE PROOFING:
-1. Call get_unmapped_layers to see which layers still need to be classified.
-2. Call get_learned_mappings to see what's already known -- don't re-ask about layers already handled.
-3. For any layer that's still unmapped, resolve it first (see the train_layer_mapping prompt for the classification
+0. Call explode_with_booth_lock FIRST. XRef and block geometry sits on collapsed layers until it is exploded, so
+   surveying before exploding gives you an incomplete layer list. After it succeeds, call run_full_proofing with
+   skipPrepareGeometry=true so the explode is not repeated.
+1. Call get_layers_for_review. It returns EVERY non-frozen, non-standard layer: LEARNED ones (from memory, High
+   confidence, shown with their target) and NEW ones (not in memory). No layer may be skipped or silently dropped.
+2. Present ONE review table with all of them: learned mappings first (High confidence, pre-accepted) and then your
+   proposals for the NEW layers. Classify each NEW layer with your best understanding (name, then
+   poll_layer_semantics / get_layer_geometry). Never default an unknown layer to Deleted_ -- propose the closest A2Z
+   target, or 'None' with a clear reason if nothing fits, and let the user decide. The user may exclude learned
+   mappings or leave them, and include/exclude the new suggestions.
+3. After the user approves, call set_mapping_review_filter with the approved source layers so excluded learned
+   mappings are NOT applied, then call learn_layer_mapping for newly accepted mappings. (Use unlearn_layer_mapping only
+   if the user asks to forget a learned mapping.) Layers left unmapped end up renamed to Deleted_ by run_full_proofing.
+4. For any layer that's still unmapped, resolve it first (see the train_layer_mapping prompt for the classification
    approach) so apply_layer_mappings has something to work with. Only call learn_layer_mapping when you or the user
    have deliberately decided on a mapping -- never invent one silently during proofing, and never call it just
    because a layer resembles a standard one.
 
 PROOFING: prefer calling the single run_full_proofing tool -- it performs the correct sequence (unlock, lock booth
-layers, prepare geometry, apply mappings, apply colors, purge, rename remaining non-standard layers to Deleted_)
+layers, prepare geometry (skippable if already exploded), apply mappings, apply colors, purge, rename remaining non-standard layers to Deleted_)
 deterministically and safely. Only fall back to the granular tools individually if the user is asking for a
 non-standard, partial variant of proofing.
 
@@ -70,7 +82,8 @@ Do not call apply_layer_mappings, run_full_proofing, learn_layer_mapping, or any
         public static ChatMessage TrainLayerMapping() => new(ChatRole.User, @"
 Find and classify unmapped vendor layers into the standard A2Z target layers.
 
-1. Call get_unmapped_layers to get the list, and get_learned_mappings for context on what's already known.
+1. Call get_layers_for_review to get every non-frozen, non-standard layer (LEARNED ones from memory plus NEW ones), and
+   get_learned_mappings for context. Show learned mappings as High confidence; classify the NEW ones.
 2. Classify each layer by NAME first:
    - If the name strongly suggests a target (e.g. 'A-WALL', 'G-COLS', 'BOOTH-NUM', 'E-PWR'), you can be confident.
    - If the name is ambiguous (numeric codes, generic names like 'MISC', 'LAYER1', single letters), it's uncertain --
@@ -81,15 +94,17 @@ Find and classify unmapped vendor layers into the standard A2Z target layers.
         Classify using this evidence:
    - Expo_View2: electrical ports, power drops, building utilities, fire exits/hoses, keep-clear demarcations.
    - Expo_Column: column-like structural supports and pillars.
-   - Expo_BoothOutline: booth boundary polylines/rectangles.
-   - Expo_BoothNumber: booth number text labels.
+   - Expo_ImageMarkings: image-based markings.
+   (Never map vendor layers to the booth output layers Expo_BoothOutline / Expo_BoothNumber /
+   Expo_MaxBoothOutline / Expo_MaxBoothNumber -- the proofing workflow populates those itself.)
    - Expo_Building: walls, partitions, doors, stairs, airwalls, permanent fixtures, railings.
    - Expo_Markings: entrances, washroom labels, show titles, hall names, general non-booth text.
    - Expo_NES: non-exhibiting spaces -- enclosed boxes with text like service areas or restrooms.
 4. For each layer, state the proposed mapping and a one-sentence reason in chat BEFORE calling learn_layer_mapping --
    don't call it silently. The user will be asked to approve the call regardless, but the stated reasoning is what
    makes the review meaningful.
-5. Never propose mapping a layer to itself, and never re-propose a layer that get_learned_mappings shows is already handled.
+5. Never propose mapping a layer to itself. Never default an unknown layer to Deleted_; propose your best-fit target or
+   'None' with a reason. Learned layers are shown with their saved target as High confidence, not hidden.
 ");
     }
 }

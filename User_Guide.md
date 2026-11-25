@@ -200,10 +200,9 @@ Use this after proofing if you want to do a final tidy-up.
 Runs a standalone explode pass in this exact order:
 1. Unlocks every layer in the drawing (except the four protected booth layers).
 2. Locks the four booth output layers so they are never touched: `Expo_BoothOutline`, `Expo_BoothNumber`, `Expo_MaxBoothOutline`, `Expo_MaxBoothNumber`.
-3. Deletes all POINT entities (they cannot be exploded and serve no purpose).
-4. Deletes all 3D Face entities (they cannot be exploded; only deletion works).
-5. Flattens all SPLINE entities (converts them to polylines).
-6. Runs an iterative explode loop — as many passes as needed — until all remaining complex entities (blocks, MText, hatches, etc.) are resolved or confirmed unexplodable.
+3. Deletes POINT and 3DFACE entities (they cannot be exploded and serve no purpose); HATCH and attribute definitions are deleted only if they still cannot be exploded after the explode loop. Nothing else is deleted — entities that cannot be exploded stay in the drawing and are listed by type.
+4. Flattens all SPLINE entities (converts them to polylines).
+5. Runs an iterative explode loop — as many passes as needed — until all remaining complex entities (blocks, MText, hatches, etc.) are resolved or confirmed unexplodable.
 
 The chat shows each step and the final result. No API tokens are used — this runs natively.
 

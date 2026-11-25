@@ -106,6 +106,7 @@ namespace BricsAI.Plugins.V19Tools
                 }
 
                 int totalOutlines = ssetBooths.Count;
+                int totalNumbers = ssetText.Count;  // read before the selection set is deleted
                 int unmatchedCount = 0;
 
                 for (int i = 0; i < ssetBooths.Count; i++)
@@ -137,7 +138,7 @@ namespace BricsAI.Plugins.V19Tools
                 try { ssetBooths.Delete(); } catch { }
                 try { ssetText.Delete(); } catch { }
 
-                return $"Booth outline count: {totalOutlines}. Booth number count: {ssetText.Count}. " +
+                return $"Booth outline count: {totalOutlines}. Booth number count: {totalNumbers}. " +
                        $"Booths WITHOUT a booth number: {unmatchedCount}. " +
                        $"Booths WITH a booth number: {totalOutlines - unmatchedCount}.";
             }
@@ -466,26 +467,20 @@ namespace BricsAI.Plugins.V19Tools
 
                 LoggerService.LogTransaction("PLUGIN", "PrepareGeometry: starting shared ExplodeHelper.Run.");
                 object docObj = doc; // Cast to object so the tuple return type stays statically typed
-                var (passCount, _, remaining) = ExplodeHelper.Run(docObj, extraLocked);
+                var (passCount, _, remaining, deletedSummary, remainingByType) = ExplodeHelper.Run(docObj, extraLocked);
 
-                // PrepareGeometry erases any truly unexplodable leftovers (hard cleanup for full proofing).
-                if (remaining > 0)
-                {
-                    const string wl = "(if (setq ss (ssget \"_X\" '((-4 . \"<NOT\") (-4 . \"<OR\") (0 . \"ARC\") (0 . \"LINE\") (0 . \"CIRCLE\") (0 . \"ELLIPSE\") (0 . \"LWPOLYLINE\") (0 . \"TEXT\") (0 . \"SOLID\") (-4 . \"OR>\") (-4 . \"NOT>\")))) (command \"_.ERASE\" ss \"\"))\n";
-                    SendCommandSafe(doc, "\x03\x03");
-                    SendCommandSafe(doc, wl);
-                    System.Threading.Thread.Sleep(500);
-                }
-
+                // Nothing else is erased here. Entities that could not be exploded stay in the drawing and are
+                // reported; removing them is a separate, explicit request (delete_non_standard_entities).
                 SendCommandSafe(doc, "(setvar \"REGENMODE\" 1)\n");
                 SendCommandSafe(doc, "(setvar \"QAFLAGS\" 0)\n");
 
-                LoggerService.LogTransaction("PLUGIN", $"PrepareGeometry: done — {passCount} passes, {remaining} remaining before hard erase.");
+                LoggerService.LogTransaction("PLUGIN", $"PrepareGeometry: done — {passCount} passes, {remaining} remaining (kept), deleted: {(string.IsNullOrEmpty(deletedSummary) ? "none" : deletedSummary)}.");
 
-                string unexplodableNote = remaining > 0
-                    ? $" WARNING: {remaining} entities could not be exploded after {passCount} passes and were erased (likely locked, xref-attached, or dynamic blocks). Review the drawing for missing geometry."
+                string deletedNote = string.IsNullOrEmpty(deletedSummary) ? "" : $" Deleted unexplodable/unused entities: {deletedSummary}.";
+                string remainingNote = remaining > 0
+                    ? $" WARNING: {remaining} entities could not be exploded after {passCount} passes and were LEFT IN THE DRAWING ({remainingByType}) — likely locked, xref-attached, or dynamic blocks. They were not deleted; review them or ask for delete_non_standard_entities."
                     : " All complex entities were successfully exploded.";
-                return $"Geometry Prepared Natively: Executed {passCount} global wipe cycles.{unexplodableNote}";
+                return $"Geometry Prepared Natively: Executed {passCount} global wipe cycles.{deletedNote}{remainingNote}";
             }
             catch (Exception ex)
             {

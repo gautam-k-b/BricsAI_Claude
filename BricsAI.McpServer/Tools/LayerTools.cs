@@ -33,7 +33,7 @@ namespace BricsAI.McpServer.Tools
             => ToolExec.RunAsync(comClient, sta, $"NET:SELECT_INNER:{layer}");
 
         [McpServerTool(Name = "apply_layer_mappings"), Description(
-            "Moves entities from every learned source layer to its mapped standard A2Z target layer, using agent_knowledge.txt. " +
+            "Moves entities from every learned source layer to its mapped standard A2Z target layer, using the learned mappings in the knowledge database. " +
             "Always locks the booth output layers first so they can never be affected by this pass.")]
         public static async Task<string> ApplyLayerMappings(ComClient comClient, StaComHost sta)
         {
@@ -93,7 +93,7 @@ namespace BricsAI.McpServer.Tools
             => ToolExec.RunAsync(comClient, sta, $"NET:EXPORT_LAYER_SNAPSHOT:{layer}|{format}");
 
         [McpServerTool(Name = "learn_layer_mapping"), Description(
-            "Permanently records a source-layer to standard-target-layer mapping in agent_knowledge.txt. " +
+            "Permanently records a source-layer to standard-target-layer mapping in the knowledge database. " +
             "Only call this when you (or the user) have deliberately decided on a mapping — state the mapping and your reasoning " +
             "in chat before calling this tool.")]
         public static Task<string> LearnLayerMapping(

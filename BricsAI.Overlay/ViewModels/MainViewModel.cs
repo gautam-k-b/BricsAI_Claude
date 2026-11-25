@@ -759,7 +759,7 @@ namespace BricsAI.Overlay.ViewModels
             var standardA2zLayersEarly = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
                 "0", "Defpoints", "Expo_BoothOutline", "Expo_BoothNumber", "Expo_Building",
-                "Expo_Markings", "Expo_View2", "Expo_Column", "Expo_NES", "Expo_MaxBoothOutline", "Expo_MaxBoothNumber"
+                "Expo_Markings", "Expo_View2", "Expo_Column", "Expo_NES", "Expo_ImageMarkings", "Expo_MaxBoothOutline", "Expo_MaxBoothNumber"
             };
 
             string layersForSurveyor = string.Join(", ",
@@ -797,7 +797,7 @@ namespace BricsAI.Overlay.ViewModels
             var standardA2zLayers = new HashSet<string>(StringComparer.OrdinalIgnoreCase) 
             { 
                 "0", "Defpoints", "Expo_BoothOutline", "Expo_BoothNumber", "Expo_Building", "Expo_Markings", "Expo_View2", "Expo_Column",
-                "Expo_NES", "Expo_MaxBoothOutline", "Expo_MaxBoothNumber"
+                "Expo_NES", "Expo_ImageMarkings", "Expo_MaxBoothOutline", "Expo_MaxBoothNumber"
             };
 
             // Safely sanitize the COM 'Step' and 'Layers found:' prefix so it doesn't pollute the target logic
