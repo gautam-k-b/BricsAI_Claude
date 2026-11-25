@@ -24,3 +24,12 @@ AI_ExecutionLogs.txt
 
 # Release notes now live as GitHub Releases, not a tracked repo file — kept locally as a draft
 RELEASE_NOTES.md
+
+# Release packaging output and client test dumps
+Package/
+ClientTestResults/
+*.zip
+
+# Local Claude Code state (skills in .claude/skills stay shareable)
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
