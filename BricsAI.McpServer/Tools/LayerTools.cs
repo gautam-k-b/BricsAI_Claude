@@ -63,6 +63,18 @@ namespace BricsAI.McpServer.Tools
         public static Task<string> UnlockLayersByPrefix(ComClient comClient, StaComHost sta, [Description("Layer name prefix.")] string prefix)
             => ToolExec.RunAsync(comClient, sta, $"NET:UNLOCK_LAYERS_BY_PREFIX:{prefix}");
 
+        [McpServerTool(Name = "move_to_booth_layer"), Description(
+            "EXPLICIT, user-requested move of entities from a vendor layer onto a protected booth output layer (Expo_BoothOutline, Expo_BoothNumber, " +
+            "Expo_MaxBoothOutline, Expo_MaxBoothNumber). Booth layers are never targets of learned mappings; call this only when the user named the source " +
+            "layer and the booth target. mode 'shapes' moves only closed rectangular polylines of the typical booth size (walls and fixtures stay), " +
+            "'text' moves only TEXT/MTEXT (booth numbers), 'all' moves everything. Run it AFTER the geometry has been exploded; the booth layer ends locked.")]
+        public static Task<string> MoveToBoothLayer(
+            ComClient comClient, StaComHost sta,
+            [Description("Source (vendor) layer, e.g. a Japanese or Chinese layer name.")] string sourceLayer,
+            [Description("Booth output layer to receive the entities.")] string boothLayer,
+            [Description("shapes (default), text or all.")] string mode = "shapes")
+            => ToolExec.RunAsync(comClient, sta, $"NET:MOVE_TO_BOOTH:{sourceLayer}:{boothLayer}:{mode}");
+
         [McpServerTool(Name = "lock_booth_layers"), Description("Locks Expo_BoothOutline, Expo_BoothNumber, Expo_MaxBoothOutline, and Expo_MaxBoothNumber to protect them during cleanup. Idempotent.")]
         public static Task<string> LockBoothLayers(ComClient comClient, StaComHost sta)
             => ToolExec.RunAsync(comClient, sta, "NET:LOCK_BOOTH_LAYERS");

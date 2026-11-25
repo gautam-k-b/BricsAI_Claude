@@ -480,7 +480,8 @@ namespace BricsAI.Plugins.V15Tools
                 string remainingNote = remaining > 0
                     ? $" WARNING: {remaining} entities could not be exploded after {passCount} passes and were LEFT IN THE DRAWING ({remainingByType}) — likely locked, xref-attached, or dynamic blocks. They were not deleted; review them or ask for delete_non_standard_entities."
                     : " All complex entities were successfully exploded.";
-                return $"Geometry Prepared Natively: Executed {passCount} global wipe cycles.{deletedNote}{remainingNote}";
+                string proposalNote = string.IsNullOrEmpty(ExplodeHelper.LastProposalSummary) ? "" : " " + ExplodeHelper.LastProposalSummary;
+                return $"Geometry Prepared Natively: Executed {passCount} global wipe cycles.{deletedNote}{remainingNote}{proposalNote}";
             }
             catch (Exception ex)
             {

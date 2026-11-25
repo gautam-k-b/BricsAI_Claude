@@ -80,6 +80,7 @@ namespace BricsAI.Plugins.V19Tools
                     ? $"{remaining} non-standard entities remain and were kept ({remainingByType}) — unexplodable: locked, xref-attached, or dynamic blocks."
                     : "All non-standard entities resolved.";
                 suffix = deletedNote + " " + suffix;
+                if (!string.IsNullOrEmpty(ExplodeHelper.LastProposalSummary)) suffix += " " + ExplodeHelper.LastProposalSummary;
                 return $"Explode with booth lock complete: {passCount} passes, {totalReduced} entities reduced. {suffix}";
             }
             catch (System.Exception ex)

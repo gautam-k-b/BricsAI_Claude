@@ -1,3 +1,4 @@
+using System;
 using System.ComponentModel;
 using System.Text;
 using System.Threading.Tasks;
@@ -19,7 +20,8 @@ namespace BricsAI.McpServer.Tools
             "Prefer this tool over calling the individual steps yourself.")]
         public static async Task<string> RunFullProofing(
             ComClient comClient, StaComHost sta,
-            [Description("True when geometry was already exploded before layer analysis; skips the prepare/explode step.")] bool skipPrepareGeometry = false)
+            [Description("True when geometry was already exploded before layer analysis; skips the prepare/explode step.")] bool skipPrepareGeometry = false,
+            [Description("Optional user-approved booth moves, run after the explode and before mappings: 'sourceLayer>boothLayer:mode;...' with mode shapes|text|all (default shapes), e.g. '01_X>Expo_BoothOutline:shapes;Y>Expo_BoothNumber:text'.")] string boothMoves = "")
         {
             var log = new StringBuilder();
             try
@@ -32,6 +34,14 @@ namespace BricsAI.McpServer.Tools
                     log.AppendLine("Step A: Skipped — geometry was exploded before layer analysis.");
                 else
                     log.AppendLine("Step A: " + await ToolExec.RunAsync(comClient, sta, "NET:PREPARE_GEOMETRY"));
+                foreach (var move in (boothMoves ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    var arrow = move.Split('>', 2);
+                    if (arrow.Length != 2) { log.AppendLine($"Step A2: skipped malformed booth move '{move}'."); continue; }
+                    var rest = arrow[1].Split(':', 2);
+                    string mode = rest.Length > 1 ? rest[1].Trim() : "shapes";
+                    log.AppendLine($"Step A2: " + await ToolExec.RunAsync(comClient, sta, $"NET:MOVE_TO_BOOTH:{arrow[0].Trim()}:{rest[0].Trim()}:{mode}"));
+                }
                 log.AppendLine("Step B: " + await ToolExec.RunAsync(comClient, sta, "NET:APPLY_LAYER_MAPPINGS"));
                 log.AppendLine("Step C: " + await ToolExec.RawAsync(comClient, sta, "(c:a2zcolor)"));
                 log.AppendLine("Step D1: " + await ToolExec.RawAsync(comClient, sta, "(command \"-PURGE\" \"All\" \"*\" \"N\")"));

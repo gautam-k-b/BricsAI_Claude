@@ -47,6 +47,19 @@ namespace BricsAI.Overlay.ViewModels
         public bool IsNotBusy => !IsBusy;
         public bool IsQuickActionsEnabled => !IsBusy && !_isInTableMappingReview;
 
+        /// <summary>Opt-in for drawings whose booths sit inside block groups (see ProofingOptions). Off by default.</summary>
+        public bool BlockGroupedBooths
+        {
+            get => BricsAI.Core.ProofingOptions.BlockGroupedBooths;
+            set
+            {
+                if (BricsAI.Core.ProofingOptions.BlockGroupedBooths == value) return;
+                BricsAI.Core.ProofingOptions.BlockGroupedBooths = value;
+                BricsAI.Core.LoggerService.LogTransaction("OVERLAY", $"Block-grouped booths option {(value ? "ON" : "OFF")}.");
+                OnPropertyChanged();
+            }
+        }
+
         public ICommand SendCommand { get; }
         
         // Quick Actions Dashboard Commands
@@ -401,12 +414,16 @@ namespace BricsAI.Overlay.ViewModels
                                     if (known != null) newTarget = known;
                                 }
 
-                                BricsAI.Core.KnowledgeService.SaveLearning(reviewResponse.RuleText);
+                                bool isBoothTarget = BricsAI.Core.KnowledgeService.IsBoothTarget(newTarget);
 
-                                bool isBoothTarget = newTarget.StartsWith("Expo_", StringComparison.OrdinalIgnoreCase) &&
-                                    (newTarget.EndsWith("BoothOutline", StringComparison.OrdinalIgnoreCase) || newTarget.EndsWith("BoothNumber", StringComparison.OrdinalIgnoreCase));
+                                // A booth target typed by the reviewer in the review chat is an explicit choice, like
+                                // picking it in the grid: save it as a booth mapping for an existing row.
+                                if (isBoothTarget && rowIdx >= 0)
+                                    BricsAI.Core.KnowledgeService.SaveBoothMapping(_mappingQueue[rowIdx].Source, newTarget);
+                                else
+                                    BricsAI.Core.KnowledgeService.SaveLearning(reviewResponse.RuleText);
 
-                                if (rowIdx >= 0 && !isBoothTarget)
+                                if (rowIdx >= 0)
                                 {
                                     string srcName = _mappingQueue[rowIdx].Source;
                                     _mappingQueue[rowIdx] = (srcName, newTarget);
@@ -417,10 +434,6 @@ namespace BricsAI.Overlay.ViewModels
                                     _excludedIndexes.Remove(row1);
                                     Messages.Add(new ChatMessage { Role = "Assistant", Content = $"🧠 Remembered, and row {row1} ('{srcName}') now maps to {newTarget} and is included.\n\n📋 The mapping review is still open — continue deciding the remaining rows." });
                                     mappingRowChanged = true;
-                                }
-                                else if (rowIdx >= 0)
-                                {
-                                    Messages.Add(new ChatMessage { Role = "Assistant", Content = $"⚠️ '{newTarget}' is a protected booth output layer — vendor layers cannot be mapped to it, so row {rowIdx + 1} was left unchanged." });
                                 }
                                 else
                                 {
@@ -854,9 +867,31 @@ namespace BricsAI.Overlay.ViewModels
 
                 var allMappings = new List<BricsAI.Overlay.Services.Agents.MappingResult>();
 
+                // Layers created by the opt-in pre-explode booth separation are suggested deterministically (no LLM):
+                // the reviewer still sees them in the grid and can change or reject the suggested booth layer.
+                var proposedSuggestions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["Proposed_BoothOutline"] = "Expo_BoothOutline",
+                    ["Proposed_BoothNumber"] = "Expo_BoothNumber",
+                    ["Proposed_Building"] = "Expo_Building",
+                    ["Proposed_Column"] = "Expo_Column"
+                };
+                foreach (var pl in unknownLayers.Where(l => proposedSuggestions.ContainsKey(l)))
+                {
+                    allMappings.Add(new BricsAI.Overlay.Services.Agents.MappingResult
+                    {
+                        SourceLayer = pl,
+                        TargetLayer = proposedSuggestions[pl],
+                        Reason = "Separated before explode (booth scenario) - confirm the suggested layer",
+                        LispCode = $"NET:LEARN_LAYER_MAPPING:{pl}:{proposedSuggestions[pl]}",
+                        Confidence = "High"
+                    });
+                }
+                var layersForAi = unknownLayers.Where(l => !proposedSuggestions.ContainsKey(l)).ToList();
+
                 // === PHASE 1: Classify by layer name alone (1 LLM call, no COM) ===
-                mapProgress.Report($"\n🏷️ Phase 1: Classifying {unknownLayers.Count} layers by name...");
-                var phase1 = await _mapper.ClassifyByNameAsync(unknownLayers);
+                mapProgress.Report($"\n🏷️ Phase 1: Classifying {layersForAi.Count} layers by name...");
+                var phase1 = await _mapper.ClassifyByNameAsync(layersForAi);
                 totalTokens += phase1.Tokens;
                 totalInputTokens += phase1.InputTokens;
                 totalOutputTokens += phase1.OutputTokens;
@@ -1283,7 +1318,11 @@ namespace BricsAI.Overlay.ViewModels
                 }
                 if (_includedIndexes.Contains(i))
                 {
-                    BricsAI.Core.KnowledgeService.SaveLearning($"Map the layer '{source}' to standard layer '{target}'.");
+                    // A booth target picked in the grid is an explicit reviewer decision; only that path may save one.
+                    if (BricsAI.Core.KnowledgeService.IsBoothTarget(target))
+                        BricsAI.Core.KnowledgeService.SaveBoothMapping(source, target);
+                    else
+                        BricsAI.Core.KnowledgeService.SaveLearning($"Map the layer '{source}' to standard layer '{target}'.");
                     acceptedCount++;
                 }
             }

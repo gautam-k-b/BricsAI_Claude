@@ -272,8 +272,44 @@ namespace BricsAI.Core
 
         public static void ClearApplyFilter() => _applyFilter = null;
 
-        /// <summary>Learned mappings to apply to the drawing, restricted to the reviewed set when a filter is active.</summary>
+        public static bool IsBoothTarget(string? layer) => layer != null && _protectedTargets.Contains(layer);
+
+        /// <summary>
+        /// Saves a mapping whose target is a booth output layer. Unlike SaveLearning this is only for an
+        /// explicit reviewer choice (the Overlay grid); AI, MCP and free-text paths still cannot create one.
+        /// </summary>
+        public static void SaveBoothMapping(string source, string target)
+        {
+            if (!IsBoothTarget(target)) { SaveLearning($"Map the layer '{source}' to standard layer '{target}'."); return; }
+            try
+            {
+                using var conn = OpenConnection();
+                UpsertMapping(conn, source.Trim(), target.Trim(), DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+                LoggerService.LogTransaction("KNOWLEDGE", $"SaveBoothMapping: '{source}' -> '{target}' (explicit reviewer choice).");
+            }
+            catch (Exception ex) { LoggerService.LogTransaction("KNOWLEDGE", $"SaveBoothMapping failed: {ex.Message}"); }
+        }
+
+        /// <summary>Learned mappings to apply to the drawing, restricted to the reviewed set when a filter is active.
+        /// Mappings that target a booth layer are excluded: they are applied by <see cref="GetBoothMappingsForApply"/>.</summary>
         public static Dictionary<string, string> GetLayerMappingsForApply()
+        {
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var kvp in GetFilteredMappings())
+                if (!_protectedTargets.Contains(kvp.Value)) result[kvp.Key] = kvp.Value;
+            return result;
+        }
+
+        /// <summary>Reviewer-approved booth mappings (source layer → booth output layer) for this run.</summary>
+        public static Dictionary<string, string> GetBoothMappingsForApply()
+        {
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var kvp in GetFilteredMappings())
+                if (_protectedTargets.Contains(kvp.Value)) result[kvp.Key] = kvp.Value;
+            return result;
+        }
+
+        private static Dictionary<string, string> GetFilteredMappings()
         {
             var all = GetLayerMappingsDictionary();
             var filter = _applyFilter;

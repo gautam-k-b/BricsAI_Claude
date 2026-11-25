@@ -191,6 +191,16 @@ Use this only when the layer mappings are already learned and trusted.
 Using the bricsai MCP server, run a full AI proofing on the active drawing: first run explode_with_booth_lock, then check for unmapped layers, apply the learned layer mappings, run run_full_proofing with skipPrepareGeometry=true, then audit the result and give me a summary report. Stop and ask me before applying any mapping you are not confident about.
 ```
 
+### Special drawings: booths joined inside blocks (SEMICON-style)
+
+Off by default. Only for drawings whose booth outlines are connected inside block references.
+
+```
+Using the bricsai MCP server, call set_block_grouped_booths with enabled=true, then run explode_with_booth_lock. Show me the Proposed_BoothOutline / Proposed_BoothNumber / Proposed_Building / Proposed_Column result, then continue the proofing with those mapped to Expo_BoothOutline / Expo_BoothNumber / Expo_Building / Expo_Column after I confirm.
+```
+
+Use `move_to_booth_layer` (or `boothMoves` on `run_full_proofing`) for explicit booth moves. Turn the option off afterwards with `set_block_grouped_booths` enabled=false (it also resets when the server restarts).
+
 ### Useful follow-up prompts
 
 | Goal | Prompt |

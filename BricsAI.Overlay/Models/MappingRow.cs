@@ -15,7 +15,8 @@ namespace BricsAI.Overlay.Models
         /// <summary>Targets offered in each row's Target Layer drop-down. The AI's own suggestion is
         /// always added to a row's list if it is not one of these, so it can stay selected.</summary>
         public static readonly string[] StandardTargets =
-            { NoneTarget, "Expo_Building", "Expo_Column", "Expo_View2", "Expo_Markings", "Expo_NES", "Expo_ImageMarkings" };
+            { NoneTarget, "Expo_Building", "Expo_Column", "Expo_View2", "Expo_Markings", "Expo_NES", "Expo_ImageMarkings",
+              "Expo_BoothOutline", "Expo_BoothNumber" };
 
         private bool _isSelected;
         private string _targetLayer = "";

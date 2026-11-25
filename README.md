@@ -86,6 +86,8 @@ BricsAI.McpServer                     Surveyor -> Mapper -> MappingReview -> Exe
 - select_utilities
 - explode_entities_by_type
 - delete_non_standard_entities
+- set_block_grouped_booths (opt-in, drawing-specific; see below)
+- move_to_booth_layer (move a layer's booth shapes/text to a booth layer; reviewer-explicit)
 
 **Geometry preparation behaviour:**
 - POINT and 3DFACE entities are deleted upfront before the explosion loop — they cannot be exploded and carry no useful geometry. HATCH and ATTDEF entities are deleted only if they are still present after the loop has stalled (i.e. they could not be exploded any further).
@@ -94,6 +96,8 @@ BricsAI.McpServer                     Surveyor -> Mapper -> MappingReview -> Exe
 - Any other entity that still could not be exploded is **left in the drawing** (never auto-erased) and reported by type in a `WARNING:` note. ValidatorAgent treats this as a partial failure and surfaces it to the user. Removing such leftovers is a separate, explicit request (`delete_non_standard_entities`).
 - Layer 0 is never wiped and the current layer (CLAYER) is not changed.
 - `prepare_geometry` returns `"All complex entities were successfully exploded."` on a clean run, or `"WARNING: N entities could not be exploded after N passes and were LEFT IN THE DRAWING (<types>)..."` when some remain.
+
+**Block-grouped booths mode (opt-in, off by default):** for drawings where booth outlines are joined inside block references and use non-standard layer names (e.g. SEMICON Japan `01_一般` / `一般`). Enable with the Overlay checkbox, `set_block_grouped_booths(true)`, or `BRICSAI_BLOCK_GROUPED_BOOTHS=1`. When on: explode restores block contents from layer 0 to the block's layer and keeps closed heavy polylines intact; then `BoothProposer` separates booth boxes / booth numbers / small rectangles / other content into `Proposed_BoothOutline`, `Proposed_BoothNumber`, `Proposed_Column`, `Proposed_Building` (nothing is deleted; the two booth layers are locked and never exploded). The grid then suggests the real `Expo_*` layers. `run_full_proofing` accepts `boothMoves='src>Expo_BoothOutline:shapes;src2>Expo_BoothNumber:text'` for explicit moves.
 
 ### Proofing tools
 
@@ -219,7 +223,7 @@ Real API calls still happen (mock mode only replaces the BricsCAD COM layer), so
 7. Optionally export layer snapshots for visual review
 8. Optionally run clean_deleted_layers only on explicit approval
 
-## BricsAI.Overlay Behaviour (v3.9.0)
+## BricsAI.Overlay Behaviour (v3.10.0)
 
 - **LLM connection is mandatory.** `BaseAgent` throws `LlmUnavailableException` for a missing/invalid key, network failure, rate limit or bad model (messages built in `AnthropicRuntime.DescribeFailure`). The view model stops the run and reports the reason; it never continues with empty or guessed AI output. A connectivity check also runs at startup.
 - **Intent gate.** Typed messages go through `IntentAgent` (one LLM call) which returns `FULL_PROOFING`, `CAD_TASK` or `CHAT`. Chat (greetings, small talk, unrelated or negated requests such as "don't proof this yet") is answered in the chat pane without touching BricsCAD. Quick-action buttons and the resume-after-review call skip the gate; the Run Full AI Proofing button always counts as full proofing.

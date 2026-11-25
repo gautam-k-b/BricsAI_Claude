@@ -100,7 +100,15 @@
             <Border Grid.Row="1" Grid.Column="0" Background="#2A2A2A" CornerRadius="0,0,0,10" BorderBrush="#33FFFFFF" BorderThickness="0,1,1,0">
                 <StackPanel Margin="10,20,10,10">
                     <TextBlock Text="Quick Actions" Foreground="#00A8FF" FontSize="12" FontWeight="Bold" Margin="5,0,0,10" TextWrapping="Wrap"/>
-                    
+
+                    <CheckBox Content="Block-grouped booths (special drawings)" IsChecked="{Binding BlockGroupedBooths, Mode=TwoWay}"
+                              IsEnabled="{Binding IsQuickActionsEnabled}" Foreground="#DDD" Margin="5,0,0,10"
+                              ToolTip="Only for drawings where booths are drawn inside block groups (e.g. SEMICON Japan): keeps each block's layer on explode, then separates booth outlines, booth numbers, building and column content into Proposed_ layers for you to confirm. Leave unticked for normal drawings.">
+                        <CheckBox.LayoutTransform>
+                            <ScaleTransform ScaleX="0.9" ScaleY="0.9"/>
+                        </CheckBox.LayoutTransform>
+                    </CheckBox>
+
                     <Button Content="🤖 Run Full AI Proofing" Command="{Binding RunProofingCommand}" IsEnabled="{Binding IsQuickActionsEnabled}"
                             Height="40" Margin="0,0,0,10" Background="#333" Foreground="White" BorderThickness="1" BorderBrush="#555" 
                             HorizontalContentAlignment="Left" Padding="10,0" ToolTip="Execute exact order of operations and geometry checks.">

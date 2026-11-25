@@ -47,6 +47,7 @@ namespace BricsAI.Plugins.V15Tools
                    netCommandName.StartsWith("NET:ERASE_ENTITIES_ON_LAYER") ||
                    netCommandName.StartsWith("NET:UNLOCK_LAYERS_BY_PREFIX") ||
                    netCommandName.StartsWith("NET:LOCK_BOOTH_LAYERS") ||
+                   netCommandName.StartsWith("NET:MOVE_TO_BOOTH:") ||
                    netCommandName.StartsWith("NET:POLL_LAYER_SEMANTICS") ||
                    netCommandName.StartsWith("NET:GET_LAYER_GEOMETRY") ||
                    netCommandName.StartsWith("NET:EXPORT_LAYER_SNAPSHOT") ||
@@ -84,6 +85,7 @@ namespace BricsAI.Plugins.V15Tools
             if (netCmd.StartsWith("NET:ERASE_ENTITIES_ON_LAYER:")) return EraseEntitiesOnLayer(doc, netCmd.Substring("NET:ERASE_ENTITIES_ON_LAYER:".Length).Trim());
             if (netCmd.StartsWith("NET:UNLOCK_LAYERS_BY_PREFIX:")) return UnlockLayersByPrefix(doc, ExtractTarget(netCmd));
             if (netCmd.StartsWith("NET:LOCK_BOOTH_LAYERS")) return LockBoothLayers(doc);
+            if (netCmd.StartsWith(BoothMover.Prefix)) return BoothMover.Run(doc, netCmd);
             if (netCmd.StartsWith("NET:POLL_LAYER_SEMANTICS:")) return PollLayerSemantics(doc, netCmd);
             if (netCmd.StartsWith("NET:GET_LAYER_GEOMETRY:")) return GetLayerGeometry(doc, netCmd);
             if (netCmd.StartsWith("NET:EXPORT_LAYER_SNAPSHOT:")) return ExportLayerSnapshot(doc, netCmd);
@@ -92,7 +94,7 @@ namespace BricsAI.Plugins.V15Tools
             if (netCmd.StartsWith("NET:SHOW_LAYER:")) return SetLayerVisibility(doc, netCmd.Substring("NET:SHOW_LAYER:".Length).Trim(), true);
             if (netCmd.StartsWith("NET:HIDE_LAYER:")) return SetLayerVisibility(doc, netCmd.Substring("NET:HIDE_LAYER:".Length).Trim(), false);
             if (netCmd == "NET:SHOW_ALL_LAYERS") return ShowAllLayers(doc);
-            
+
             return "Error: Command not explicitly handled in LayerToolsPlugin.";
         }
 
@@ -122,6 +124,33 @@ namespace BricsAI.Plugins.V15Tools
             }
         }
 
+        // DXF entity name -> ObjectName reported in the histogram (kept identical to the previous per-entity output).
+        private static readonly (string dxf, string objName)[] PollTypes =
+        {
+            ("INSERT", "AcDbBlockReference"), ("LINE", "AcDbLine"), ("ARC", "AcDbArc"), ("CIRCLE", "AcDbCircle"),
+            ("ELLIPSE", "AcDbEllipse"), ("LWPOLYLINE", "AcDbPolyline"), ("POLYLINE", "AcDb2dPolyline/AcDb3dPolyline"),
+            ("SPLINE", "AcDbSpline"), ("TEXT", "AcDbText"), ("MTEXT", "AcDbMText"), ("HATCH", "AcDbHatch"),
+            ("SOLID", "AcDbSolid"), ("3DFACE", "AcDbFace"), ("POINT", "AcDbPoint"), ("WIPEOUT", "AcDbWipeout"),
+            ("DIMENSION", "AcDbDimension"), ("LEADER", "AcDbLeader"), ("MLEADER", "AcDbMLeader"),
+            ("ATTDEF", "AcDbAttributeDefinition"), ("ATTRIB", "AcDbAttribute"), ("IMAGE", "AcDbRasterImage"),
+            ("VIEWPORT", "AcDbViewport"), ("3DSOLID", "AcDb3dSolid"), ("REGION", "AcDbRegion"), ("RAY", "AcDbRay"),
+            ("XLINE", "AcDbXline"), ("TRACE", "AcDbTrace"), ("MLINE", "AcDbMline"), ("TABLE", "AcDbTable")
+        };
+
+        /// <summary>Exact number of entities of one DXF type on a layer, via a native filtered selection.</summary>
+        private static int CountLayerType(dynamic selectionSets, string layer, string dxfType)
+        {
+            dynamic? ss = null;
+            try
+            {
+                ss = selectionSets.Add("BricsAI_PollC_" + Guid.NewGuid().ToString("N").Substring(0, 6));
+                ss.Select(5, Type.Missing, Type.Missing, new short[] { 0, 8 }, new object[] { dxfType, layer });
+                return (int)ss.Count;
+            }
+            catch { return 0; }
+            finally { try { ss?.Delete(); } catch { } }
+        }
+
         private string PollLayerSemantics(dynamic doc, string cmd)
         {
             try
@@ -144,30 +173,57 @@ namespace BricsAI.Plugins.V15Tools
                 int count = sset.Count;
                 if (count == 0) return "[]";
 
-                Dictionary<string, int> entityTypes = new Dictionary<string, int>();
-                HashSet<string> blockNames = new HashSet<string>();
-                HashSet<string> textValues = new HashSet<string>();
-
-                for (int i = 0; i < count; i++)
+                // Layers can hold hundreds of thousands of entities after an explode, and walking every one
+                // through COM takes many minutes. The histogram is therefore built from native per-type
+                // selections (exact counts, one fast query each) and only block names / text are sampled.
+                const int SampleCap = 3000;
+                var entityTypes = new Dictionary<string, int>();
+                int counted = 0;
+                foreach (var (dxf, objName) in PollTypes)
                 {
-                    var entity = sset.Item(i);
-                    string eType = entity.ObjectName;
-                    if (entityTypes.ContainsKey(eType)) entityTypes[eType]++; else entityTypes[eType] = 1;
-
-                    if (eType.Contains("BlockReference"))
-                    {
-                        try { blockNames.Add(entity.Name); } catch { }
-                    }
-                    else if (eType.Contains("Text") || eType.Contains("MText"))
-                    {
-                        try 
-                        { 
-                            string txt = entity.TextString;
-                            if (txt.Length > 20) txt = txt.Substring(0, 20);
-                            textValues.Add(txt); 
-                        } catch { }
-                    }
+                    int n = CountLayerType(selectionSets, targetLayer, dxf);
+                    if (n > 0) { entityTypes[objName] = n; counted += n; }
                 }
+                if (count > counted) entityTypes["Other"] = count - counted;
+
+                var blockNames = new HashSet<string>();
+                var textValues = new HashSet<string>();
+                bool sampled = false;
+
+                foreach (var (dxf, isBlock) in new[] { ("INSERT", true), ("TEXT", false), ("MTEXT", false) })
+                {
+                    dynamic? typed = null;
+                    try
+                    {
+                        string tn = "BricsAI_PollT_" + Guid.NewGuid().ToString("N").Substring(0, 6);
+                        typed = selectionSets.Add(tn);
+                        typed.Select(5, Type.Missing, Type.Missing, new short[] { 0, 8 }, new object[] { dxf, targetLayer });
+                        int tc = typed.Count;
+                        if (tc > SampleCap) sampled = true;
+                        for (int i = 0; i < Math.Min(tc, SampleCap); i++)
+                        {
+                            try
+                            {
+                                var e = typed.Item(i);
+                                if (isBlock) blockNames.Add((string)e.Name);
+                                else
+                                {
+                                    string txt = e.TextString;
+                                    if (txt.Length > 20) txt = txt.Substring(0, 20);
+                                    textValues.Add(txt);
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+                    catch { }
+                    finally { try { typed?.Delete(); } catch { } }
+                }
+
+                // Booth evidence: booth outlines are many closed rectangles of ONE size; booth numbers are short
+                // letter+digit labels (E4001, W1001, 125). Both can sit on a layer that also holds other drawing content.
+                var (rects, domArea, domCount, rectSampled) = BoothMover.SampleRectangles((object)selectionSets, targetLayer, SampleCap);
+                int boothLikeText = textValues.Count(t => System.Text.RegularExpressions.Regex.IsMatch(t.Trim(), @"^[A-Za-z]{0,2}\d{2,5}[A-Za-z]?$"));
 
                 var result = new
                 {
@@ -175,7 +231,17 @@ namespace BricsAI.Plugins.V15Tools
                     TotalCount = count,
                     EntityTypes = entityTypes,
                     BlockNames = blockNames.ToArray(),
-                    TextSample = textValues.ToArray()
+                    TextSample = textValues.ToArray(),
+                    BoothEvidence = new
+                    {
+                        ClosedRectanglesInSample = rects,
+                        PolylinesSampled = rectSampled,
+                        SameSizeRectangles = domCount,
+                        SameSizeRectangleArea = Math.Round(domArea, 2),
+                        BoothNumberLikeTexts = boothLikeText,
+                        DistinctTextsSampled = textValues.Count
+                    },
+                    Note = sampled ? $"BlockNames/TextSample are drawn from the first {SampleCap} block references / text objects; EntityTypes counts are exact." : null
                 };
 
                 return System.Text.Json.JsonSerializer.Serialize(result);
@@ -568,12 +634,11 @@ namespace BricsAI.Plugins.V15Tools
         //         if (lispMacro.Length > 0)
         //         {
         //             lispMacro.AppendLine("(princ)"); // suppress (load) return value — prevents help.bricsys.com from opening
-
         //             string tempPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "_BricsAI_Mappings.lsp");
         //             System.IO.File.WriteAllText(tempPath, lispMacro.ToString());
         //             string lispPath = tempPath.Replace("\\", "/");
         //             doc.SendCommand("\x03\x03"); // Clear execution line
-        //             doc.SendCommand($"(load \"{lispPath}\")\n");                                        
+        //             doc.SendCommand($"(load \"{lispPath}\")\n");        
         //         }
 
         //         return $"Applied mappings natively with a single batch execution via LISP script load.";
@@ -583,17 +648,40 @@ namespace BricsAI.Plugins.V15Tools
         //         return $"Error applying mappings: {ex.Message}";
         //     }
         // }
-
+        
         private string ApplyLayerMappings(dynamic doc)
         {
             try
             {
                 var mappings = KnowledgeService.GetLayerMappingsForApply();
-                if (mappings == null || mappings.Count == 0)
+                var boothMappings = KnowledgeService.GetBoothMappingsForApply();
+                if ((mappings == null || mappings.Count == 0) && boothMappings.Count == 0)
                     return "Error: No layer mappings strictly learned yet.";
+                mappings ??= new Dictionary<string, string>();
 
-                LoggerService.LogTransaction("PLUGIN", $"ApplyLayerMappings: starting with {mappings.Count} mapping rules.");
+                LoggerService.LogTransaction("PLUGIN", $"ApplyLayerMappings: starting with {mappings.Count} mapping rules and {boothMappings.Count} booth mapping(s).");
                 var sw = System.Diagnostics.Stopwatch.StartNew();
+
+                // Step 0: reviewer-approved booth mappings. Only the booth entities move (closed rectangles for
+                // outline layers, text for number layers); everything else on that source layer is ordinary
+                // drawing content and goes to Expo_Building like any other building layer.
+                var boothLog = new List<string>();
+                foreach (var bm in boothMappings)
+                {
+                    // Proposed_ layers were already separated by the pre-explode step, so everything on them moves.
+                    string mode = BoothProposer.IsProposedLayer(bm.Key) ? "all"
+                        : bm.Value.EndsWith("Number", StringComparison.OrdinalIgnoreCase) ? "text" : "shapes";
+                    string moved = BoothMover.Run(doc, $"{BoothMover.Prefix}{bm.Key}:{bm.Value}:{mode}");
+                    boothLog.Add(moved);
+                    LoggerService.LogTransaction("PLUGIN", $"ApplyLayerMappings: booth mapping '{bm.Key}' -> '{bm.Value}': {moved}");
+                    if (moved.StartsWith("Error", StringComparison.OrdinalIgnoreCase)) continue;
+
+                    try { doc.Layers.Add("Expo_Building"); } catch { }
+                    try { doc.Layers.Item(bm.Key).Lock = false; } catch { }
+                    string escBoothSrc = bm.Key.Replace("\"", "\\\"");
+                    doc.SendCommand("\x03\x03");
+                    doc.SendCommand($"(if (setq ss (ssget \"_X\" '((8 . \"{escBoothSrc}\")))) (command \"_.CHPROP\" ss \"\" \"_LA\" \"Expo_Building\" \"\"))\n");
+                }
 
                 // Booth layers that must NEVER be unlocked
                 var boothLayers = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -641,7 +729,8 @@ namespace BricsAI.Plugins.V15Tools
 
                 sw.Stop();
                 LoggerService.LogTransaction("PLUGIN", $"ApplyLayerMappings: sent {ruleCount} remap commands in {sw.ElapsedMilliseconds}ms.");
-                return $"Applied {ruleCount} layer mapping rules via native LISP batch.";
+                string boothSummary = boothLog.Count > 0 ? " Booth moves: " + string.Join(" | ", boothLog) : "";
+                return $"Applied {ruleCount} layer mapping rules via native LISP batch.{boothSummary}";
             }
             catch (Exception ex)
             {

@@ -208,6 +208,8 @@ The chat shows each step and the final result. No API tokens are used — this r
 
 Use this when you only need to clean geometry without doing a full proof (for example, on a drawing you have already mapped before).
 
+**Special drawings (booths joined inside blocks):** tick **Block-grouped booths (special drawings)** in Quick Actions before running. The explode then keeps each block's layer, keeps booth boxes intact, and separates booth outlines, booth numbers, columns and building content into temporary `Proposed_BoothOutline`, `Proposed_BoothNumber`, `Proposed_Column` and `Proposed_Building` layers (the two booth layers are locked). In the mapping table these are pre-suggested as `Expo_BoothOutline`, `Expo_BoothNumber`, `Expo_Column` and `Expo_Building` — check and apply. Leave the box unticked for normal drawings.
+
 ---
 
 ### 📊 Generate Summary

@@ -26,15 +26,47 @@ namespace BricsAI.Plugins.V19Tools
             new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
                 "Expo_BoothOutline", "Expo_BoothNumber",
-                "Expo_MaxBoothOutline", "Expo_MaxBoothNumber"
+                "Expo_MaxBoothOutline", "Expo_MaxBoothNumber",
+                // Temporary booth layers made by the opt-in pre-explode separation: never exploded or unlocked.
+                "Proposed_BoothOutline", "Proposed_BoothNumber"
             };
 
-        private static readonly short[]  WTypes = { -4, -4, 0, 0, 0, 0, 0, 0, 0, -4, -4 };
-        private static readonly object[] WData  = { "<NOT", "<OR", "ARC", "LINE", "CIRCLE", "ELLIPSE", "LWPOLYLINE", "TEXT", "SOLID", "OR>", "NOT>" };
+        // Default (all drawings): the original whitelist - everything else is exploded.
+        private static readonly short[]  WTypesDefault = { -4, -4, 0, 0, 0, 0, 0, 0, 0, -4, -4 };
+        private static readonly object[] WDataDefault  = { "<NOT", "<OR", "ARC", "LINE", "CIRCLE", "ELLIPSE", "LWPOLYLINE", "TEXT", "SOLID", "OR>", "NOT>" };
+
+        // Block-grouped-booth drawings only (ProofingOptions.BlockGroupedBooths): closed heavy POLYLINEs (booth boxes)
+        // must stay polylines - exploding them would break every booth into four loose lines. The COM filter
+        // approximates this by whitelisting POLYLINE outright; the LISP filter below is exact (closed flag only).
+        private static readonly short[]  WTypesBooth = { -4, -4, 0, 0, 0, 0, 0, 0, 0, 0, -4, -4 };
+        private static readonly object[] WDataBooth  = { "<NOT", "<OR", "ARC", "LINE", "CIRCLE", "ELLIPSE", "LWPOLYLINE", "TEXT", "SOLID", "POLYLINE", "OR>", "NOT>" };
+
+        private static short[]  WTypes => BricsAI.Core.ProofingOptions.BlockGroupedBooths ? WTypesBooth : WTypesDefault;
+        private static object[] WData  => BricsAI.Core.ProofingOptions.BlockGroupedBooths ? WDataBooth : WDataDefault;
 
         // LISP that selects all non-whitelisted entities and explodes them in one command call.
-        private const string ExpLisp =
+        private const string ExpLispDefault =
             "(if (setq ss (ssget \"_X\" '((-4 . \"<NOT\") (-4 . \"<OR\") (0 . \"ARC\") (0 . \"LINE\") (0 . \"CIRCLE\") (0 . \"ELLIPSE\") (0 . \"LWPOLYLINE\") (0 . \"TEXT\") (0 . \"SOLID\") (-4 . \"OR>\") (-4 . \"NOT>\")))) (command \"_.EXPLODE\" ss \"\"))\n";
+
+        private const string ExpLispBooth =
+            "(if (setq ss (ssget \"_X\" '((-4 . \"<NOT\") (-4 . \"<OR\") (0 . \"ARC\") (0 . \"LINE\") (0 . \"CIRCLE\") (0 . \"ELLIPSE\") (0 . \"LWPOLYLINE\") (0 . \"TEXT\") (0 . \"SOLID\") (-4 . \"<AND\") (0 . \"POLYLINE\") (-4 . \"&\") (70 . 1) (-4 . \"AND>\") (-4 . \"OR>\") (-4 . \"NOT>\")))) (command \"_.EXPLODE\" ss \"\"))\n";
+
+        private static string ExpLisp => BricsAI.Core.ProofingOptions.BlockGroupedBooths ? ExpLispBooth : ExpLispDefault;
+
+        // Explodes every block reference on a non-booth layer one at a time and puts any resulting layer-0
+        // entity back on the block reference's own layer (EXPLODE otherwise leaves booth outlines on layer 0).
+        // Nested blocks inherit the restored layer, so the chain survives the following passes.
+        private const string RestoreDefun =
+            "(defun ba-xr ( / ss i en lay old nw d) " +
+            "(if (setq ss (ssget \"_X\" '((0 . \"INSERT\") (-4 . \"<NOT\") (8 . \"Expo_*Booth*,Proposed_Booth*\") (-4 . \"NOT>\")))) " +
+            "(progn (setq i 0) (while (< i (sslength ss)) " +
+            "(setq en (ssname ss i) lay (cdr (assoc 8 (entget en))) old (entlast)) " +
+            "(command \"_.EXPLODE\" en) " +
+            "(setq nw (if old (entnext old) (entnext))) " +
+            "(while nw (setq d (entget nw)) " +
+            "(if (and (= (cdr (assoc 8 d)) \"0\") (/= lay \"0\")) (vl-catch-all-apply 'entmod (list (subst (cons 8 lay) (assoc 8 d) d)))) " +
+            "(setq nw (entnext nw))) " +
+            "(setq i (1+ i))))) (princ))\n";
 
         /// <summary>Locks the four booth output layers plus any caller-supplied extras.</summary>
         internal static void LockBoothLayers(object docObj, IEnumerable<string>? extra = null)
@@ -87,6 +119,9 @@ namespace BricsAI.Plugins.V19Tools
         /// <returns>(passCount, totalReduced, remaining, deletedSummary, remainingByType) — remaining is the
         /// number of non-standard entities still in the drawing (never erased); deletedSummary lists the
         /// POINT/3DFACE/HATCH/ATTDEF entities that were deleted; remainingByType is e.g. "BlockReference x3".</returns>
+        /// <summary>Result text of the last booth separation (empty when the option is off).</summary>
+        internal static string LastProposalSummary { get; private set; } = "";
+
         internal static (int passCount, int totalReduced, int remaining, string deletedSummary, string remainingByType) Run(
             object docObj,
             IEnumerable<string>? extraLockedLayers = null,
@@ -167,6 +202,13 @@ namespace BricsAI.Plugins.V19Tools
                 previousCount = countBefore;
 
                 doc.SendCommand("(setvar \"QAFLAGS\" 1)\n");
+                int insertCount = BricsAI.Core.ProofingOptions.BlockGroupedBooths ? CountInserts(doc) : 0;
+                if (insertCount > 0)
+                {
+                    doc.SendCommand(RestoreDefun);
+                    doc.SendCommand("(ba-xr)\n");
+                    System.Threading.Thread.Sleep(Math.Min(20000, Math.Max(300, insertCount * 15)));
+                }
                 doc.SendCommand(ExpLisp);
                 doc.SendCommand("(setvar \"QAFLAGS\" 0)\n");
 
@@ -207,8 +249,28 @@ namespace BricsAI.Plugins.V19Tools
 
             doc.SendCommand("(setvar \"CMDECHO\" 1)\n");
 
+            // Opt-in, drawing-specific: separate booth outlines / numbers / building content into Proposed_ layers.
+            LastProposalSummary = "";
+            if (BricsAI.Core.ProofingOptions.BlockGroupedBooths)
+                LastProposalSummary = BoothProposer.Run(docObj);
+
             string deletedSummary = string.Join(", ", deleted.Where(kv => kv.Value > 0).Select(kv => $"{kv.Key} x{kv.Value}"));
             return (passCount, totalReduced, remaining, deletedSummary, remainingByType);
+        }
+
+        /// <summary>Block references in the drawing (exploded with parent-layer restore).</summary>
+        private static int CountInserts(dynamic doc)
+        {
+            string name = "BA_EH_I_" + Guid.NewGuid().ToString("N").Substring(0, 6);
+            dynamic? ss = null;
+            try
+            {
+                ss = doc.SelectionSets.Add(name);
+                ss.Select(5, Type.Missing, Type.Missing, new short[] { 0 }, new object[] { "INSERT" });
+                return (int)ss.Count;
+            }
+            catch { return 0; }
+            finally { try { ss?.Delete(); } catch { } }
         }
 
         private static int CountByType(dynamic doc, string dxfType)

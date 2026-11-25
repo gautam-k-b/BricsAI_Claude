@@ -38,6 +38,18 @@ namespace BricsAI.McpServer.Tools
         public static Task<string> PrepareGeometry(ComClient comClient, StaComHost sta)
             => ToolExec.RunAsync(comClient, sta, "NET:PREPARE_GEOMETRY");
 
+        [McpServerTool(Name = "set_block_grouped_booths"), Description(
+            "Drawing-specific option, OFF by default. Turn it on ONLY for drawings whose booths are drawn inside block groups (e.g. SEMICON Japan): " +
+            "the next explode keeps each block's layer instead of dropping contents to layer 0, keeps closed heavy polylines intact, and then separates " +
+            "booth outlines, booth numbers, building and column content into the temporary Proposed_BoothOutline / Proposed_BoothNumber / Proposed_Building / " +
+            "Proposed_Column layers (the two booth layers are locked and never exploded). Confirm the real layers afterwards via the review " +
+            "(move_to_booth_layer for booth layers). The setting lasts until the server restarts.")]
+        public static string SetBlockGroupedBooths([Description("true to enable, false to disable.")] bool enabled)
+        {
+            BricsAI.Core.ProofingOptions.BlockGroupedBooths = enabled;
+            return $"Block-grouped booths option is now {(enabled ? "ON" : "OFF")}.";
+        }
+
         [McpServerTool(Name = "explode_entities_by_type"), Description("Explodes all entities of a given type (e.g. SPLINE, 3D SOLID, MULTILEADER, MTEXT) across up to 10 passes.")]
         public static Task<string> ExplodeEntitiesByType(ComClient comClient, StaComHost sta, [Description("Entity type name, e.g. 'MULTILEADER'.")] string entityType)
             => ToolExec.RunAsync(comClient, sta, $"NET:QSELECT_EXPLODE:{entityType}");
